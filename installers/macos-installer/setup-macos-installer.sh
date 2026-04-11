@@ -3,9 +3,39 @@ set -euo pipefail
 
 APP_NAME="ZaloClaw Local Setup (macOS)"
 APP_VERSION="0.1.0"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SOURCE_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE_PATH" ]]; do
+  LINK_TARGET="$(readlink "$SOURCE_PATH")"
+  if [[ "$LINK_TARGET" == /* ]]; then
+    SOURCE_PATH="$LINK_TARGET"
+  else
+    SOURCE_PATH="$(cd "$(dirname "$SOURCE_PATH")" && cd "$(dirname "$LINK_TARGET")" && pwd)/$(basename "$LINK_TARGET")"
+  fi
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BOOTSTRAP_SCRIPT="$SCRIPT_DIR/scripts/macos-bootstrap.js"
+
+resolve_bootstrap_script() {
+  local -a candidates=(
+    "$SCRIPT_DIR/scripts/macos-bootstrap.js"
+    "$ROOT_DIR/installers/macos-installer/scripts/macos-bootstrap.js"
+    "$SCRIPT_DIR/../Resources/scripts/macos-bootstrap.js"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  log "Bootstrap script not found. Checked:"
+  for candidate in "${candidates[@]}"; do
+    log " - $candidate"
+  done
+  return 1
+}
 
 log() {
   printf "%s\n" "$1"
@@ -72,13 +102,15 @@ main() {
   log "== $APP_NAME v$APP_VERSION =="
   ensure_node_runtime
 
-  if [[ ! -f "$BOOTSTRAP_SCRIPT" ]]; then
-    log "Bootstrap script not found: $BOOTSTRAP_SCRIPT"
+  local bootstrap_script
+  if ! bootstrap_script="$(resolve_bootstrap_script)"; then
     exit 1
   fi
 
+  log "Using bootstrap script: $bootstrap_script"
+
   cd "$ROOT_DIR"
-  node "$BOOTSTRAP_SCRIPT" --source-root "$ROOT_DIR" "$@"
+  node "$bootstrap_script" --source-root "$ROOT_DIR" "$@"
 }
 
 main "$@"
