@@ -433,6 +433,23 @@ function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isDockerFatalStartupError(detail) {
+  if (!detail) {
+    return false;
+  }
+
+  const normalized = detail.toLowerCase();
+  const fatalMarkers = [
+    "internal virtualization error",
+    "the virtual machine stopped unexpectedly",
+    "failed to run: running vm",
+    "process terminated unexpectedly",
+    "virtualization-framework failed to run",
+  ];
+
+  return fatalMarkers.some((marker) => normalized.includes(marker));
+}
+
 async function waitForDockerDaemonReady(state, options = {}) {
   const stepId = options.stepId || "infra";
   const waitSeconds = Number.isFinite(options.waitSeconds) ? options.waitSeconds : 120;
@@ -452,6 +469,17 @@ async function waitForDockerDaemonReady(state, options = {}) {
     }
 
     const detail = (dockerInfo.stderr || dockerInfo.stdout || "").trim();
+    if (isDockerFatalStartupError(detail)) {
+      const firstLine = detail.split(/\r?\n/)[0] || "Docker Desktop VM failed to start";
+      addCheckpoint(state, stepId, `Docker fatal startup error: ${firstLine}`);
+      addLog(
+        state,
+        "error",
+        "Docker Desktop failed to start its VM (virtualization error). Open Docker Desktop, restart it, then retry setup. If it persists, reboot macOS and use Docker Desktop Troubleshoot -> Reset to factory defaults.",
+      );
+      return false;
+    }
+
     if (attempt === 1) {
       addLog(state, "warn", "Docker daemon is not reachable yet. Waiting for Docker Desktop to become ready...");
       if (detail) {
