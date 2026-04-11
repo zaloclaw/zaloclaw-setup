@@ -104,9 +104,9 @@ chmod +x "$MACOS_DIR/ZaloClawSetup"
 # Create PkgInfo for proper app identification
 echo -n "APPL????" > "$CONTENTS/PkgInfo"
 
-# Create a link to setup files in Resources for easy access
-ln -sf "$SCRIPT_DIR/setup-macos-ui.sh" "$RESOURCES_DIR/setup-macos-ui.sh"
-ln -sf "$SCRIPT_DIR/scripts" "$RESOURCES_DIR/scripts"
+# Create relative links so the bundle remains portable across machines/paths.
+ln -sfn "../../../setup-macos-ui.sh" "$RESOURCES_DIR/setup-macos-ui.sh"
+ln -sfn "../../../scripts" "$RESOURCES_DIR/scripts"
 
 # Placeholder icon (will appear as generic document icon until a real .icns is provided)
 touch "$RESOURCES_DIR/AppIcon.png"

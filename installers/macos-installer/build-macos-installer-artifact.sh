@@ -12,10 +12,8 @@ mkdir -p "$OUT_DIR"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR/macos-installer/scripts"
 
-# Generate the Automator .app if it doesn't exist (most elegant entry point)
-if [[ ! -d "$SCRIPT_DIR/ZaloClawSetup.app" ]]; then
-  bash "$SCRIPT_DIR/create-automator-app.sh" > /dev/null 2>&1
-fi
+# Always regenerate the Automator .app to avoid stale machine-specific symlinks.
+bash "$SCRIPT_DIR/create-automator-app.sh" > /dev/null 2>&1
 
 cp "$SCRIPT_DIR/setup-macos-installer.sh" "$STAGE_DIR/macos-installer/"
 cp "$SCRIPT_DIR/setup-macos-ui.sh" "$STAGE_DIR/macos-installer/"
