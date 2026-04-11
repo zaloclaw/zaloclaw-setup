@@ -394,12 +394,40 @@ async function ensurePrerequisite(state, tool) {
   return commandExists(tool.command);
 }
 
+async function isDockerDesktopInstalled() {
+  const check = await runCommand("open", ["-Ra", "Docker"], { shell: false });
+  return check.code === 0;
+}
+
+async function ensureDockerDesktopInstalled(state) {
+  if (await isDockerDesktopInstalled()) {
+    return true;
+  }
+
+  addLog(state, "warn", "Docker Desktop app is not installed.");
+  if (!state.runtime.installMissingPrerequisites) {
+    addLog(state, "warn", "Automatic install disabled for Docker Desktop.");
+    return false;
+  }
+
+  addLog(state, "info", "Installing Docker Desktop...");
+  const install = await runCommand("bash", ["-lc", "brew install --cask docker"], {
+    inheritOutput: true,
+  });
+
+  if (install.code !== 0) {
+    addLog(state, "warn", `Docker Desktop install command failed with code ${install.code}.`);
+    return false;
+  }
+
+  return isDockerDesktopInstalled();
+}
+
 async function ensurePrerequisites(state) {
   const tools = [
     { name: "Git", command: "git", install: "brew install git" },
     { name: "Node.js", command: "node", install: "brew install node" },
     { name: "npm", command: "npm", install: "brew install node" },
-    { name: "Docker Desktop", command: "docker", install: "brew install --cask docker" },
   ];
 
   if (!(await ensureHomebrew(state))) {
@@ -414,16 +442,30 @@ async function ensurePrerequisites(state) {
     }
   }
 
-  if (!missing.includes("Docker Desktop") && (await commandExists("docker"))) {
-    const dockerReady = await waitForDockerDaemonReady(state, {
-      stepId: "prerequisites",
-      waitSeconds: 120,
-      intervalSeconds: 5,
-    });
+  const hasDockerDesktop = await ensureDockerDesktopInstalled(state);
+  if (!hasDockerDesktop) {
+    missing.push("Docker Desktop");
+    return missing;
+  }
 
-    if (!dockerReady) {
-      missing.push("Docker daemon");
-    }
+  if (!(await commandExists("docker"))) {
+    addLog(
+      state,
+      "error",
+      "Docker CLI command is unavailable even though Docker Desktop is installed. Open Docker Desktop once, then retry setup.",
+    );
+    missing.push("Docker CLI");
+    return missing;
+  }
+
+  const dockerReady = await waitForDockerDaemonReady(state, {
+    stepId: "prerequisites",
+    waitSeconds: 120,
+    intervalSeconds: 5,
+  });
+
+  if (!dockerReady) {
+    missing.push("Docker daemon");
   }
 
   return missing;
