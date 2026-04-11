@@ -399,6 +399,26 @@ async function isDockerDesktopInstalled() {
   return check.code === 0;
 }
 
+function extractBrewBinaryConflictPath(output) {
+  const match = output.match(/already a Binary at '([^']+)'/i);
+  return match ? match[1] : null;
+}
+
+function moveSymlinkAside(filePath) {
+  try {
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isSymbolicLink()) {
+      return null;
+    }
+
+    const backupPath = `${filePath}.zaloclaw-backup-${Date.now()}`;
+    fs.renameSync(filePath, backupPath);
+    return backupPath;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureDockerDesktopInstalled(state) {
   if (await isDockerDesktopInstalled()) {
     return true;
@@ -411,13 +431,45 @@ async function ensureDockerDesktopInstalled(state) {
   }
 
   addLog(state, "info", "Installing Docker Desktop...");
-  const install = await runCommand("bash", ["-lc", "brew install --cask docker"], {
-    inheritOutput: true,
+  let install = await runCommand("bash", ["-lc", "brew install --cask docker-desktop"], {
+    shell: false,
   });
 
   if (install.code !== 0) {
-    addLog(state, "warn", `Docker Desktop install command failed with code ${install.code}.`);
-    return false;
+    const detail = `${install.stderr || ""}\n${install.stdout || ""}`;
+    const conflictPath = extractBrewBinaryConflictPath(detail);
+
+    if (conflictPath) {
+      addLog(state, "warn", `Homebrew reported binary conflict at ${conflictPath}.`);
+      const backupPath = moveSymlinkAside(conflictPath);
+
+      if (backupPath) {
+        addLog(state, "info", `Moved conflicting symlink to ${backupPath}. Retrying Docker Desktop install...`);
+        install = await runCommand("bash", ["-lc", "brew install --cask docker-desktop"], {
+          shell: false,
+        });
+
+        if (install.code !== 0) {
+          addLog(state, "warn", `Docker Desktop retry install failed with code ${install.code}.`);
+          addLog(state, "warn", `You can restore the previous symlink with: mv \"${backupPath}\" \"${conflictPath}\"`);
+          return false;
+        }
+      } else {
+        addLog(
+          state,
+          "error",
+          `Cannot auto-resolve conflict at ${conflictPath}. Remove or rename that file, then rerun setup.`,
+        );
+        return false;
+      }
+    } else {
+      addLog(state, "warn", `Docker Desktop install command failed with code ${install.code}.`);
+      const firstLine = (install.stderr || install.stdout || "").split(/\r?\n/).find(Boolean);
+      if (firstLine) {
+        addLog(state, "warn", `Install error: ${firstLine}`);
+      }
+      return false;
+    }
   }
 
   return isDockerDesktopInstalled();
