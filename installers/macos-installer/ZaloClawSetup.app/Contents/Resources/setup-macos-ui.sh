@@ -1,0 +1,1 @@
+/Users/hungnguyen/git/zaloclaw/zaloclaw-setup/installers/macos-installer/setup-macos-ui.sh

@@ -1,0 +1,98 @@
+{
+  "startedAt": "2026-04-09T17:10:31.950Z",
+  "platform": {
+    "name": "macos",
+    "raw": "darwin",
+    "isWindows": false,
+    "isMac": true,
+    "isAdminLike": false
+  },
+  "workspaceRoot": "/Users/hungnguyen/git/zaloclaw/zaloclaw-setup",
+  "logs": [
+    "2026-04-09T17:10:31.976Z [info] Cloning https://github.com/zaloclaw/zaloclaw-ui.git into zaloclaw-ui",
+    "2026-04-09T17:10:35.984Z [info] Cloning https://github.com/zaloclaw/zaloclaw-infra.git into zaloclaw-infra",
+    "2026-04-09T17:10:40.475Z [info] Using env template: .env.example",
+    "2026-04-09T17:11:40.312Z [error] Unexpected setup error: AbortError: Aborted with Ctrl+C"
+  ],
+  "blockedReasons": [],
+  "steps": [
+    {
+      "id": "platform",
+      "title": "Detect OS and permission context",
+      "status": "done",
+      "retries": 0,
+      "checkpoints": [
+        "2026-04-09T17:10:31.954Z Detected platform macos",
+        "2026-04-09T17:10:31.954Z Admin-like permissions: false"
+      ],
+      "lastError": null,
+      "startedAt": "2026-04-09T17:10:31.954Z",
+      "endedAt": "2026-04-09T17:10:31.954Z"
+    },
+    {
+      "id": "prerequisites",
+      "title": "Validate and install prerequisites",
+      "status": "done",
+      "retries": 0,
+      "checkpoints": [
+        "2026-04-09T17:10:31.975Z All prerequisites available"
+      ],
+      "lastError": null,
+      "startedAt": "2026-04-09T17:10:31.955Z",
+      "endedAt": "2026-04-09T17:10:31.975Z"
+    },
+    {
+      "id": "clone",
+      "title": "Clone or prepare repositories",
+      "status": "done",
+      "retries": 0,
+      "checkpoints": [
+        "2026-04-09T17:10:40.475Z zaloclaw-ui: zaloclaw-ui cloned",
+        "2026-04-09T17:10:40.475Z zaloclaw-infra: zaloclaw-infra cloned"
+      ],
+      "lastError": null,
+      "startedAt": "2026-04-09T17:10:31.975Z",
+      "endedAt": "2026-04-09T17:10:40.475Z"
+    },
+    {
+      "id": "env",
+      "title": "Collect and write infra .env",
+      "status": "running",
+      "retries": 0,
+      "checkpoints": [],
+      "lastError": null,
+      "startedAt": "2026-04-09T17:10:40.475Z",
+      "endedAt": null
+    },
+    {
+      "id": "infra",
+      "title": "Run platform-specific infra setup script",
+      "status": "pending",
+      "retries": 0,
+      "checkpoints": [],
+      "lastError": null,
+      "startedAt": null,
+      "endedAt": null
+    },
+    {
+      "id": "ui",
+      "title": "Optional UI launch",
+      "status": "pending",
+      "retries": 0,
+      "checkpoints": [],
+      "lastError": null,
+      "startedAt": null,
+      "endedAt": null
+    }
+  ],
+  "setupCompletion": {
+    "status": "failed",
+    "completedAt": null
+  },
+  "uiRuntime": {
+    "status": "not-started",
+    "pid": null,
+    "exitCode": null,
+    "lastMessage": null
+  }
+}

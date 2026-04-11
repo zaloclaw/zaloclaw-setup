@@ -1,0 +1,15 @@
+{
+  "name": "zaloclaw-setup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local setup package for OpenClaw and Zalo ecosystem on macOS and Windows",
+  "type": "commonjs",
+  "scripts": {
+    "setup": "node src/setup-cli.js",
+    "check": "node --check src/setup-cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

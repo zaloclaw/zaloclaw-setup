@@ -1,0 +1,18 @@
+{
+  "contractVersion": 1,
+  "scriptNames": {
+    "macos": "zaloclaw-docker-setup.sh",
+    "windows": "zaloclaw-docker-setup.ps1"
+  },
+  "requiredBehavior": [
+    "Script executes from zaloclaw-infra root directory",
+    "Script validates Docker availability before starting",
+    "Script validates required .env values before mutating infra",
+    "Script returns exit code 0 on success",
+    "Script returns non-zero exit code on failure",
+    "Script logs actionable error messages to stderr"
+  ],
+  "expectedEnvironment": {
+    "ZALOC_SETUP_CONTRACT_VERSION": "1"
+  }
+}

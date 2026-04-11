@@ -1,0 +1,33 @@
+#!/bin/bash
+set -e
+
+# Get the app bundle directory (two levels up from MacOS)
+APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$APP_DIR/.." && pwd)"
+
+# Show welcome notification
+osascript <<APPLESCRIPT
+display notification "Starting ZaloClawSetup..." with title "ZaloClawSetup"
+APPLESCRIPT
+
+# Run the UI wrapper script
+if [[ -f "$SCRIPT_DIR/setup-macos-ui.sh" ]]; then
+  bash "$SCRIPT_DIR/setup-macos-ui.sh"
+  EXIT_CODE=$?
+  
+  if [[ $EXIT_CODE -eq 0 ]]; then
+    osascript <<APPLESCRIPT
+display notification "Setup completed successfully!" with title "ZaloClawSetup" subtitle "Check setup-state.json for details"
+APPLESCRIPT
+  else
+    osascript <<APPLESCRIPT
+display alert "Setup Failed" message "Exit code: $EXIT_CODE. Check logs for details." buttons {"OK"} default button 1
+APPLESCRIPT
+    exit $EXIT_CODE
+  fi
+else
+  osascript <<APPLESCRIPT
+display alert "Error" message "setup-macos-ui.sh not found in parent directory" buttons {"OK"} default button 1
+APPLESCRIPT
+  exit 1
+fi
