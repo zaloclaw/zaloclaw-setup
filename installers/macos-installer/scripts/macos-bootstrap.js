@@ -404,10 +404,10 @@ function extractBrewBinaryConflictPath(output) {
   return match ? match[1] : null;
 }
 
-function moveSymlinkAside(filePath) {
+function moveConflictingBinaryAside(filePath) {
   try {
     const stat = fs.lstatSync(filePath);
-    if (!stat.isSymbolicLink()) {
+    if (stat.isDirectory()) {
       return null;
     }
 
@@ -441,10 +441,10 @@ async function ensureDockerDesktopInstalled(state) {
 
     if (conflictPath) {
       addLog(state, "warn", `Homebrew reported binary conflict at ${conflictPath}.`);
-      const backupPath = moveSymlinkAside(conflictPath);
+      const backupPath = moveConflictingBinaryAside(conflictPath);
 
       if (backupPath) {
-        addLog(state, "info", `Moved conflicting symlink to ${backupPath}. Retrying Docker Desktop install...`);
+        addLog(state, "info", `Moved conflicting file to ${backupPath}. Retrying Docker Desktop install...`);
         install = await runCommand("bash", ["-lc", "brew install --cask docker-desktop"], {
           shell: false,
         });
