@@ -414,7 +414,78 @@ async function ensurePrerequisites(state) {
     }
   }
 
+  if (!missing.includes("Docker Desktop") && (await commandExists("docker"))) {
+    const dockerReady = await waitForDockerDaemonReady(state, {
+      stepId: "prerequisites",
+      waitSeconds: 120,
+      intervalSeconds: 5,
+    });
+
+    if (!dockerReady) {
+      missing.push("Docker daemon");
+    }
+  }
+
   return missing;
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForDockerDaemonReady(state, options = {}) {
+  const stepId = options.stepId || "infra";
+  const waitSeconds = Number.isFinite(options.waitSeconds) ? options.waitSeconds : 120;
+  const intervalSeconds = Number.isFinite(options.intervalSeconds) ? options.intervalSeconds : 5;
+  const attempts = Math.max(1, Math.ceil(waitSeconds / intervalSeconds));
+
+  let launchedDockerDesktop = false;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const dockerInfo = await runCommand("docker", ["info"], { shell: false });
+    if (dockerInfo.code === 0) {
+      if (attempt > 1) {
+        addLog(state, "info", "Docker daemon is ready. Continuing setup.");
+        addCheckpoint(state, stepId, "Docker daemon became ready");
+      }
+      return true;
+    }
+
+    const detail = (dockerInfo.stderr || dockerInfo.stdout || "").trim();
+    if (attempt === 1) {
+      addLog(state, "warn", "Docker daemon is not reachable yet. Waiting for Docker Desktop to become ready...");
+      if (detail) {
+        addCheckpoint(state, stepId, `Docker daemon check failed: ${detail.split(/\r?\n/)[0]}`);
+      }
+
+      const launch = await runCommand("open", ["-a", "Docker"], { shell: false });
+      if (launch.code === 0) {
+        launchedDockerDesktop = true;
+        addLog(state, "info", "Requested Docker Desktop launch.");
+      }
+    }
+
+    if (attempt < attempts) {
+      addLog(state, "info", `Waiting for Docker daemon (${attempt}/${attempts})...`);
+      await sleepMs(intervalSeconds * 1000);
+    }
+  }
+
+  addLog(
+    state,
+    "error",
+    launchedDockerDesktop
+      ? "Docker Desktop did not become ready in time. Please wait until Docker is fully running, then retry setup."
+      : "Docker daemon is not reachable. Start Docker Desktop, wait until it is running, then retry setup.",
+  );
+
+  const finalCheck = await runCommand("docker", ["info"], { shell: false });
+  const finalDetail = (finalCheck.stderr || finalCheck.stdout || "").trim();
+  if (finalDetail) {
+    addCheckpoint(state, stepId, `Docker daemon still unavailable: ${finalDetail.split(/\r?\n/)[0]}`);
+  }
+
+  return false;
 }
 
 async function decideCloneMode(rl, args) {
@@ -571,6 +642,10 @@ function writeEnv(state) {
 async function runInfra(state) {
   const infraDir = path.join(state.workspaceRoot, "zaloclaw-infra");
   const scriptPath = state.runtime.infraScriptPath || path.join(infraDir, "zaloclaw-docker-setup.sh");
+
+  if (!(await waitForDockerDaemonReady(state, { stepId: "infra", waitSeconds: 60, intervalSeconds: 5 }))) {
+    throw new Error("Docker daemon is not running. Please start Docker Desktop and retry.");
+  }
 
   if (!fs.existsSync(scriptPath)) {
     throw new Error(`Infra script not found: ${scriptPath}`);
