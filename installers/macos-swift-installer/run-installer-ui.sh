@@ -6,11 +6,11 @@ cd "$SCRIPT_DIR"
 
 swift build
 
-BIN_PATH="$SCRIPT_DIR/.build/debug/ZaloClawSwiftInstaller"
+BIN_PATH="$SCRIPT_DIR/.build/debug/ZClawInstaller"
 if [[ ! -x "$BIN_PATH" ]]; then
   echo "Missing built binary: $BIN_PATH" >&2
   exit 1
 fi
 
-echo "Launching ZaloClawSwiftInstaller..."
+echo "Launching ZClawInstaller..."
 "$BIN_PATH"

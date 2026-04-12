@@ -362,7 +362,7 @@ final class InstallerViewModel: ObservableObject {
     }
 
     private func successSummaryMessage() -> String {
-        var parts: [String] = ["ZaloClaw setup finished successfully."]
+        var parts: [String] = ["ZClaw setup finished successfully."]
 
         if !workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             parts.append("Workspace: \(workspaceRoot)")
@@ -406,7 +406,7 @@ final class InstallerViewModel: ObservableObject {
         let support = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("ZaloClawSwiftInstaller", isDirectory: true)
+            .appendingPathComponent("ZClawInstaller", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         return support.appendingPathComponent("settings.json")
     }
@@ -447,7 +447,7 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    Label("ZaloClaw Swift Installer", systemImage: "shippingbox.fill")
+                    Label("ZClaw Swift Installer", systemImage: "shippingbox.fill")
                         .font(.title2.bold())
                         .foregroundStyle(primaryTextColor)
                     Spacer()
@@ -760,7 +760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let viewModel = InstallerViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        fputs("[ZaloClawSwiftInstaller] Launching macOS window...\n", stderr)
+        fputs("[ZClawInstaller] Launching macOS window...\n", stderr)
 
         let contentView = ContentView(model: viewModel)
         let hostingView = NSHostingView(rootView: contentView)
@@ -771,14 +771,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "ZaloClaw Swift Installer"
+        window.title = "ZClaw Swift Installer"
         window.center()
         window.contentView = hostingView
         window.makeKeyAndOrderFront(nil)
         self.window = window
 
         NSApp.activate(ignoringOtherApps: true)
-        fputs("[ZaloClawSwiftInstaller] Window ready.\n", stderr)
+        fputs("[ZClawInstaller] Window ready.\n", stderr)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -787,10 +787,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct ZaloClawSwiftInstallerMain {
+struct ZClawInstallerMain {
     @MainActor
     static func main() {
-        fputs("[ZaloClawSwiftInstaller] Starting app runtime...\n", stderr)
+        fputs("[ZClawInstaller] Starting app runtime...\n", stderr)
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.setActivationPolicy(.regular)

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="$ROOT_DIR/dist/macos-swift-installer"
 STAGE_DIR="$OUT_DIR/stage"
-APP_NAME="ZaloClawSwiftInstaller"
+APP_NAME="ZClawInstaller"
 VERSION="0.1.0"
 ARTIFACT_NAME="zaloclaw-macos-swift-installer-${VERSION}.tar.gz"
 
@@ -17,7 +17,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 RUNNER_SRC="$SCRIPT_DIR/scripts/macos-swift-runner.sh"
 BACKEND_DIR_SRC="$ROOT_DIR/installers/macos-installer"
 BACKEND_BOOTSTRAP_SRC="$BACKEND_DIR_SRC/scripts/macos-bootstrap.js"
-BINARY_SRC="$SCRIPT_DIR/.build/release/ZaloClawSwiftInstaller"
+BINARY_SRC="$SCRIPT_DIR/.build/release/ZClawInstaller"
 
 mkdir -p "$OUT_DIR"
 rm -rf "$STAGE_DIR"
@@ -68,13 +68,13 @@ cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>ZaloClawSwiftInstaller</string>
+  <string>ZClawInstaller</string>
   <key>CFBundleIdentifier</key>
   <string>com.zaloclaw.swiftinstaller</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>ZaloClaw Swift Installer</string>
+  <string>ZClaw Installer</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

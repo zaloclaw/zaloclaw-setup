@@ -2,17 +2,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "ZaloClawSwiftInstaller",
+    name: "ZClawInstaller",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "ZaloClawSwiftInstaller", targets: ["ZaloClawSwiftInstaller"])
+        .executable(name: "ZClawInstaller", targets: ["ZClawInstaller"])
     ],
     targets: [
         .executableTarget(
-            name: "ZaloClawSwiftInstaller",
-            path: "Sources/ZaloClawSwiftInstaller"
+            name: "ZClawInstaller",
+            path: "Sources/ZClawInstaller",
+            resources: [
+                .process("Resources")
+            ]
         )
     ]
 )
