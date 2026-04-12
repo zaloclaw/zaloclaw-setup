@@ -110,6 +110,13 @@ fi
 
 echo "Created DMG: $OUT_DIR/$ARTIFACT_NAME"
 
+# Generate SHA-256 checksum for integrity verification
+echo "Generating checksum..."
+(
+  cd "$OUT_DIR"
+  shasum -a 256 "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256"
+)
+
 # Simple existence check to replace previous tar verification
 if [[ ! -f "$OUT_DIR/$ARTIFACT_NAME" ]]; then
   echo "Verification failed: DMG missing"
