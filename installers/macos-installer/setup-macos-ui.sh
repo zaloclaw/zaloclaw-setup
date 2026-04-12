@@ -3,6 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLI_INSTALLER="$SCRIPT_DIR/setup-macos-installer.sh"
+DESIGN_BG_IMAGE=""
+
+for candidate in "$SCRIPT_DIR/zaloclaw-design.png" "$SCRIPT_DIR/../../zaloclaw-design.png"; do
+  if [[ -f "$candidate" ]]; then
+    DESIGN_BG_IMAGE="$candidate"
+    break
+  fi
+done
+
+DOCKER_DESKTOP_DOCS_URL="https://docs.docker.com/desktop/setup/install/mac-install/"
 
 if [[ ! -x "$CLI_INSTALLER" ]]; then
   osascript -e 'display alert "Missing installer" message "setup-macos-installer.sh is missing or not executable." as critical'
@@ -14,12 +24,23 @@ ask_text() {
   local prompt="$2"
   local default_value="$3"
 
-  osascript - "$title" "$prompt" "$default_value" <<'OSA'
+  osascript - "$title" "$prompt" "$default_value" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set titleText to item 1 of argv
   set promptText to item 2 of argv
   set defaultText to item 3 of argv
-  set response to display dialog promptText with title titleText default answer defaultText buttons {"Cancel", "Continue"} default button "Continue"
+  set iconPath to item 4 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    set response to display dialog promptText with title titleText default answer defaultText buttons {"Cancel", "Continue"} default button "Continue"
+  else
+    set response to display dialog promptText with title titleText default answer defaultText buttons {"Cancel", "Continue"} default button "Continue" with icon iconAlias
+  end if
   return text returned of response
 end run
 OSA
@@ -37,12 +58,23 @@ ask_path_with_browse() {
 
   while true; do
     local action_and_value
-    action_and_value="$(osascript - "$title" "$prompt" "$current_value" <<'OSA'
+    action_and_value="$(osascript - "$title" "$prompt" "$current_value" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set titleText to item 1 of argv
   set promptText to item 2 of argv
   set currentValue to item 3 of argv
-  set response to display dialog promptText with title titleText default answer currentValue buttons {"Cancel", "Browse...", "Continue"} default button "Continue"
+  set iconPath to item 4 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    set response to display dialog promptText with title titleText default answer currentValue buttons {"Cancel", "Browse...", "Continue"} default button "Continue"
+  else
+    set response to display dialog promptText with title titleText default answer currentValue buttons {"Cancel", "Browse...", "Continue"} default button "Continue" with icon iconAlias
+  end if
   set clicked to button returned of response
   set typedValue to text returned of response
   return clicked & linefeed & typedValue
@@ -93,11 +125,22 @@ ask_secret() {
   local title="$1"
   local prompt="$2"
 
-  osascript - "$title" "$prompt" <<'OSA'
+  osascript - "$title" "$prompt" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set titleText to item 1 of argv
   set promptText to item 2 of argv
-  set response to display dialog promptText with title titleText default answer "" hidden answer true buttons {"Cancel", "Continue"} default button "Continue"
+  set iconPath to item 3 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    set response to display dialog promptText with title titleText default answer "" hidden answer true buttons {"Cancel", "Continue"} default button "Continue"
+  else
+    set response to display dialog promptText with title titleText default answer "" hidden answer true buttons {"Cancel", "Continue"} default button "Continue" with icon iconAlias
+  end if
   return text returned of response
 end run
 OSA
@@ -132,15 +175,61 @@ ask_yes_no() {
     default_button="No"
   fi
 
-  osascript - "$title" "$prompt" "$default_button" <<'OSA'
+  osascript - "$title" "$prompt" "$default_button" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set titleText to item 1 of argv
   set promptText to item 2 of argv
   set defaultButtonName to item 3 of argv
-  set response to display dialog promptText with title titleText buttons {"No", "Yes"} default button defaultButtonName
+  set iconPath to item 4 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    set response to display dialog promptText with title titleText buttons {"No", "Yes"} default button defaultButtonName
+  else
+    set response to display dialog promptText with title titleText buttons {"No", "Yes"} default button defaultButtonName with icon iconAlias
+  end if
   return button returned of response
 end run
 OSA
+}
+
+ensure_docker_desktop_installed() {
+  if [[ -d "/Applications/Docker.app" || -d "$HOME/Applications/Docker.app" ]]; then
+    return 0
+  fi
+
+  local action
+  action="$(osascript - "$DOCKER_DESKTOP_DOCS_URL" "$DESIGN_BG_IMAGE" <<'OSA'
+on run argv
+  set docsUrl to item 1 of argv
+  set iconPath to item 2 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+
+  set promptText to "Docker Desktop is required before running setup." & return & return & "Install Docker Desktop, then rerun this installer." & return & docsUrl
+  if iconAlias is missing value then
+    set response to display dialog promptText with title "Docker Desktop Required" buttons {"Cancel", "Open Install Guide"} default button "Open Install Guide"
+  else
+    set response to display dialog promptText with title "Docker Desktop Required" buttons {"Cancel", "Open Install Guide"} default button "Open Install Guide" with icon iconAlias
+  end if
+  return button returned of response
+end run
+OSA
+)"
+
+  if [[ "$action" == "Open Install Guide" ]]; then
+    open "$DOCKER_DESKTOP_DOCS_URL" >/dev/null 2>&1 || true
+  fi
+
+  return 1
 }
 
 run_setup_command() {
@@ -149,6 +238,12 @@ run_setup_command() {
   local -a cmd=("$@")
 
   if [[ "$show_terminal" != "Yes" ]]; then
+    "${cmd[@]}"
+    return $?
+  fi
+
+  # If invoked from setup-macos-ui.command, reuse the current terminal window.
+  if [[ -t 1 ]]; then
     "${cmd[@]}"
     return $?
   fi
@@ -200,10 +295,21 @@ OSA
   exit_code="$(cat "$status_file" 2>/dev/null || echo 1)"
 
   if [[ "$exit_code" != "0" ]]; then
-    osascript - "$log_file" <<'OSA'
+    osascript - "$log_file" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set logPath to item 1 of argv
-  set response to display dialog "Setup failed in Terminal. Open log file?" with title "ZaloClaw Local Setup" buttons {"No", "Open Log"} default button "Open Log"
+  set iconPath to item 2 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    set response to display dialog "Setup failed in Terminal. Open log file?" with title "ZaloClaw Local Setup" buttons {"No", "Open Log"} default button "Open Log"
+  else
+    set response to display dialog "Setup failed in Terminal. Open log file?" with title "ZaloClaw Local Setup" buttons {"No", "Open Log"} default button "Open Log" with icon iconAlias
+  end if
   if button returned of response is "Open Log" then
     do shell script "open " & quoted form of logPath
   end if
@@ -223,11 +329,22 @@ show_completion_dialog() {
 
   if [[ "$launch_ui_choice" == "Yes" ]]; then
     local action
-    action="$(osascript - "$summary_text" <<'OSA'
+    action="$(osascript - "$summary_text" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set summaryText to item 1 of argv
+  set iconPath to item 2 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
   set promptText to "Setup completed. UI launch was requested and is starting in the background. It can take up to a minute before http://localhost:3000 is ready." & return & return & summaryText
-  set response to display dialog promptText with title "ZaloClaw Local Setup" buttons {"Done", "Open setup-state.json", "Open Summary", "Open UI"} default button "Open UI"
+  if iconAlias is missing value then
+    set response to display dialog promptText with title "ZaloClaw Local Setup" buttons {"Done", "Open setup-state.json", "Open Summary", "Open UI"} default button "Open UI"
+  else
+    set response to display dialog promptText with title "ZaloClaw Local Setup" buttons {"Done", "Open setup-state.json", "Open Summary", "Open UI"} default button "Open UI" with icon iconAlias
+  end if
   return button returned of response
 end run
 OSA
@@ -245,10 +362,21 @@ OSA
         fi
         ;;
       "Open Summary")
-        osascript - "$summary_text" <<'OSA'
+        osascript - "$summary_text" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set summaryText to item 1 of argv
-  display dialog summaryText with title "Setup Summary" buttons {"OK"} default button "OK"
+  set iconPath to item 2 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    display dialog summaryText with title "Setup Summary" buttons {"OK"} default button "OK"
+  else
+    display dialog summaryText with title "Setup Summary" buttons {"OK"} default button "OK" with icon iconAlias
+  end if
 end run
 OSA
         ;;
@@ -257,11 +385,22 @@ OSA
     esac
   else
     local action
-    action="$(osascript - "$summary_text" <<'OSA'
+    action="$(osascript - "$summary_text" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set summaryText to item 1 of argv
+  set iconPath to item 2 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
   set promptText to "Setup completed successfully." & return & return & summaryText
-  set response to display dialog promptText with title "ZaloClaw Local Setup" buttons {"Done", "Open setup-state.json", "Open Summary"} default button "Done"
+  if iconAlias is missing value then
+    set response to display dialog promptText with title "ZaloClaw Local Setup" buttons {"Done", "Open setup-state.json", "Open Summary"} default button "Done"
+  else
+    set response to display dialog promptText with title "ZaloClaw Local Setup" buttons {"Done", "Open setup-state.json", "Open Summary"} default button "Done" with icon iconAlias
+  end if
   return button returned of response
 end run
 OSA
@@ -276,10 +415,21 @@ OSA
         fi
         ;;
       "Open Summary")
-        osascript - "$summary_text" <<'OSA'
+        osascript - "$summary_text" "$DESIGN_BG_IMAGE" <<'OSA'
 on run argv
   set summaryText to item 1 of argv
-  display dialog summaryText with title "Setup Summary" buttons {"OK"} default button "OK"
+  set iconPath to item 2 of argv
+  set iconAlias to missing value
+  if iconPath is not "" then
+    try
+      set iconAlias to POSIX file iconPath as alias
+    end try
+  end if
+  if iconAlias is missing value then
+    display dialog summaryText with title "Setup Summary" buttons {"OK"} default button "OK"
+  else
+    display dialog summaryText with title "Setup Summary" buttons {"OK"} default button "OK" with icon iconAlias
+  end if
 end run
 OSA
         ;;
@@ -381,6 +531,10 @@ choice_to_clone_mode() {
 main() {
   osascript -e 'display notification "Guided setup will collect required values and run bootstrap." with title "ZaloClaw Local Setup"'
 
+  if ! ensure_docker_desktop_installed; then
+    exit 1
+  fi
+
   local default_workspace="$HOME/zaloclaw-local"
   local default_config="$HOME/.openclaw_z"
 
@@ -419,14 +573,9 @@ main() {
   local clone_mode
   clone_mode="$(choice_to_clone_mode "$clone_choice")"
 
-  local install_missing
-  install_missing="$(ask_yes_no "ZaloClaw Local Setup" "Install missing prerequisites using Homebrew if needed?" "yes")"
-
-  local launch_ui
-  launch_ui="$(ask_yes_no "ZaloClaw Local Setup" "Launch UI after setup completes?" "no")"
-
-  local show_terminal
-  show_terminal="$(ask_yes_no "ZaloClaw Local Setup" "Show live setup logs in Terminal window?" "yes")"
+  local install_missing="Yes"
+  local launch_ui="Yes"
+  local show_terminal="Yes"
 
   local -a cmd
   cmd=(
@@ -439,17 +588,9 @@ main() {
     --clone-mode "$clone_mode"
   )
 
-  if [[ "$install_missing" == "Yes" ]]; then
-    cmd+=(--install-missing-prerequisites)
-  else
-    cmd+=(--no-install-missing-prerequisites)
-  fi
+  cmd+=(--install-missing-prerequisites)
 
-  if [[ "$launch_ui" == "Yes" ]]; then
-    cmd+=(--launch-ui)
-  else
-    cmd+=(--no-launch-ui)
-  fi
+  cmd+=(--launch-ui)
 
   if ! run_setup_command "$show_terminal" "$CLI_INSTALLER" "${cmd[@]:1}"; then
     osascript -e 'display alert "Setup failed" message "Bootstrap script exited with an error. Please review terminal logs or setup-state.json for details." as critical'

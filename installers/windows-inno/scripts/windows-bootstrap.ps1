@@ -320,6 +320,35 @@ function Parse-KeyValueDefaults {
     return $defaults
 }
 
+function Read-EnvValue {
+    param(
+        [string]$FilePath,
+        [string]$Key
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        return $null
+    }
+
+    $content = Get-Content -Path $FilePath -Raw -ErrorAction SilentlyContinue
+    if (-not $content) {
+        return $null
+    }
+
+    if ($content -match "(?m)^\s*$Key\s*=(.*)$") {
+        $value = $matches[1].Trim()
+        if ($value.StartsWith('"') -and $value.EndsWith('"')) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        if ($value.StartsWith("'") -and $value.EndsWith("'")) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        return $value
+    }
+
+    return $null
+}
+
 function Serialize-EnvLines {
     param(
         [string[]]$SourceLines,
@@ -463,6 +492,99 @@ function Invoke-Infra {
     }
 }
 
+function Cleanup-OpenClawConfigDir {
+    param(
+        $State
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OpenClawConfigDir)) {
+        throw "OPENCLAW_CONFIG_DIR is empty."
+    }
+
+    $resolved = [System.IO.Path]::GetFullPath($OpenClawConfigDir)
+    $rootPath = [System.IO.Path]::GetPathRoot($resolved)
+    if ($resolved -eq $rootPath) {
+        throw "Refusing to remove root path as OPENCLAW_CONFIG_DIR: $resolved"
+    }
+
+    if (Test-Path -LiteralPath $resolved) {
+        Add-Log -State $State -Level "info" -Message "Cleaning OpenClaw directory before infra setup: $resolved"
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+        Add-Checkpoint -State $State -StepId "infra" -Message "Removed existing OpenClaw directory $resolved"
+    } else {
+        Add-Checkpoint -State $State -StepId "infra" -Message "OpenClaw directory did not exist: $resolved"
+    }
+
+    New-Item -Path $resolved -ItemType Directory -Force | Out-Null
+    Add-Checkpoint -State $State -StepId "infra" -Message "Prepared clean OpenClaw directory $resolved"
+}
+
+function Find-OpenClawGatewayContainer {
+    param($State)
+
+    try {
+        Add-Log -State $State -Level "info" -Message "Finding OpenClaw gateway container..."
+        $output = & docker ps --format "{{.Names}}" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Add-Log -State $State -Level "warn" -Message "Failed to list docker containers"
+            return $null
+        }
+        $containers = $output | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+        $gatewayContainer = $containers | Where-Object { $_ -like "*openclaw-gateway*" } | Select-Object -First 1
+        if ($gatewayContainer) {
+            Add-Log -State $State -Level "info" -Message "Found OpenClaw gateway container: $gatewayContainer"
+            return $gatewayContainer
+        }
+        Add-Log -State $State -Level "warn" -Message "No container with 'openclaw-gateway' pattern found"
+        return $null
+    } catch {
+        Add-Log -State $State -Level "warn" -Message "Error finding container: $_"
+        return $null
+    }
+}
+
+function Update-UiEnvContainerName {
+    param(
+        $State,
+        [string]$UiDirectory,
+        [string]$ContainerName
+    )
+
+    try {
+        $uiEnvPath = Join-Path $UiDirectory ".env"
+        if (-not (Test-Path -LiteralPath $UiDirectory)) {
+            Add-Log -State $State -Level "info" -Message "Skipping UI container env: zaloclaw-ui directory not found"
+            return $false
+        }
+        if (-not (Test-Path -LiteralPath $uiEnvPath)) {
+            Add-Log -State $State -Level "info" -Message "Skipping UI container env: .env not found"
+            return $false
+        }
+        $uiEnvContent = Get-Content -Path $uiEnvPath -Raw
+        $lines = $uiEnvContent -split "`r?`n"
+        $outputLines = @()
+        $found = $false
+        foreach ($line in $lines) {
+            if ($line -match '^\s*OPENCLAW_GATEWAY_CONTAINER\s*=') {
+                $outputLines += "OPENCLAW_GATEWAY_CONTAINER=$ContainerName"
+                $found = $true
+            } else {
+                $outputLines += $line
+            }
+        }
+        if (-not $found) {
+            $outputLines += "OPENCLAW_GATEWAY_CONTAINER=$ContainerName"
+        }
+        Set-Content -Path $uiEnvPath -Value ($outputLines -join [Environment]::NewLine) -Encoding utf8
+        Add-Checkpoint -State $State -StepId "infra" -Message "Updated UI .env with OPENCLAW_GATEWAY_CONTAINER=$ContainerName"
+        Add-Log -State $State -Level "info" -Message "Updated zaloclaw-ui .env: OPENCLAW_GATEWAY_CONTAINER=$ContainerName"
+        return $true
+    } catch {
+        Add-Log -State $State -Level "warn" -Message "Failed to update UI .env with container name: $_"
+        return $false
+    }
+}
+
 function Maybe-LaunchUi {
     param(
         $State,
@@ -489,7 +611,7 @@ function Maybe-LaunchUi {
 }
 
 function Print-Summary {
-    param($State)
+    param($State, $GatewayToken = $null)
 
     Write-Host ""
     Write-Host "=== Setup Summary ==="
@@ -508,6 +630,14 @@ function Print-Summary {
         foreach ($reason in $State.blockedReasons) {
             Write-Host "- $reason"
         }
+    }
+
+    if ($GatewayToken) {
+        Write-Host ""
+        Write-Host "=== OpenClaw Gateway Token ==="
+        Write-Host "Token: $GatewayToken"
+        Write-Host ""
+        Write-Host "Use this token to connect to OpenClaw Gateway interface."
     }
 }
 
@@ -572,10 +702,34 @@ try {
     Save-State -State $state
 
     Set-StepStatus -State $state -Id "infra" -Status "running"
+    Cleanup-OpenClawConfigDir -State $state
     Invoke-Infra -State $state -InfraDirectory $infraDir
     Add-Checkpoint -State $state -StepId "infra" -Message "Infra script completed"
     Set-StepStatus -State $state -Id "infra" -Status "done"
     Save-State -State $state
+
+    $gatewayToken = $null
+    try {
+        $infraEnvPath = Join-Path $infraDir ".env"
+        $gatewayToken = Read-EnvValue -FilePath $infraEnvPath -Key "OPENCLAW_GATEWAY_TOKEN"
+        if ($gatewayToken) {
+            Add-Log -State $state -Level "info" -Message "OpenClaw Gateway Token: $gatewayToken"
+        }
+    } catch {
+        Add-Log -State $state -Level "warn" -Message "Could not read gateway token: $_"
+    }
+
+    try {
+        $containerName = Find-OpenClawGatewayContainer -State $state
+        if ($containerName) {
+            $uiDir = Join-Path $WorkspaceRoot "zaloclaw-ui"
+            if (Test-Path -LiteralPath $uiDir) {
+                Update-UiEnvContainerName -State $state -UiDirectory $uiDir -ContainerName $containerName
+            }
+        }
+    } catch {
+        Add-Log -State $state -Level "warn" -Message "Could not update UI container name: $_"
+    }
 
     Set-StepStatus -State $state -Id "ui" -Status "running"
     $uiDir = Join-Path $WorkspaceRoot "zaloclaw-ui"
@@ -586,7 +740,7 @@ try {
     $state.setupCompletion.completedAt = (Get-Date).ToString("o")
     Save-State -State $state
 
-    Print-Summary -State $state
+    Print-Summary -State $state -GatewayToken $gatewayToken
     exit 0
 } catch {
     $message = $_.Exception.Message

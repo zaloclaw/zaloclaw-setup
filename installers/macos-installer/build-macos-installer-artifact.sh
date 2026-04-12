@@ -18,6 +18,7 @@ bash "$SCRIPT_DIR/create-automator-app.sh" > /dev/null 2>&1
 cp "$SCRIPT_DIR/setup-macos-installer.sh" "$STAGE_DIR/macos-installer/"
 cp "$SCRIPT_DIR/setup-macos-ui.sh" "$STAGE_DIR/macos-installer/"
 cp "$SCRIPT_DIR/setup-macos-ui.command" "$STAGE_DIR/macos-installer/"
+cp "$ROOT_DIR/zaloclaw-design.png" "$STAGE_DIR/macos-installer/"
 cp -r "$SCRIPT_DIR/ZaloClawSetup.app" "$STAGE_DIR/macos-installer/"
 cp "$SCRIPT_DIR/scripts/macos-bootstrap.js" "$STAGE_DIR/macos-installer/scripts/"
 chmod +x "$STAGE_DIR/macos-installer/setup-macos-installer.sh"
@@ -53,6 +54,11 @@ fi
 
 if [[ ! -f "$TMP_VERIFY_DIR/macos-installer/setup-macos-ui.command" ]]; then
   echo "Verification failed: missing setup-macos-ui.command"
+  exit 1
+fi
+
+if [[ ! -f "$TMP_VERIFY_DIR/macos-installer/zaloclaw-design.png" ]]; then
+  echo "Verification failed: missing zaloclaw-design.png"
   exit 1
 fi
 

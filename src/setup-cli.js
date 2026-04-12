@@ -117,7 +117,7 @@ function printHeader(state) {
   console.log(`Platform: ${platformName} (${adminText})\n`);
 }
 
-function printStepSummary(state) {
+function printStepSummary(state, gatewayToken = null) {
   console.log("\n=== Setup Summary ===");
   for (const step of state.steps) {
     console.log(`- ${step.id}: ${step.status}`);
@@ -132,6 +132,11 @@ function printStepSummary(state) {
     for (const reason of state.blockedReasons) {
       console.log(`- ${reason}`);
     }
+  }
+  if (gatewayToken) {
+    console.log("\n=== OpenClaw Gateway Token ===");
+    console.log(`Token: ${gatewayToken}`);
+    console.log("\nUse this token to connect to OpenClaw Gateway interface.");
   }
 }
 
@@ -478,7 +483,25 @@ function parseEnvTemplate(templateContent) {
   return fields;
 }
 
-async function collectEnvValues(state, rl, infraDir) {
+function readEnvValue(filePath, key) {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+  const pattern = new RegExp(`^${key}=(.*)$`, "m");
+  const match = content.match(pattern);
+  if (!match) {
+    return null;
+  }
+  let value = match[1].trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+async function collectEnvValues(state, rl, infraDir, prePopulatedValues = {}) {
   const templateCandidates = [".env.example", ".env.template", "example.env"];
   let fields = [];
 
@@ -504,11 +527,13 @@ async function collectEnvValues(state, rl, infraDir) {
   for (const field of fields) {
     let valid = false;
     let value = "";
+    const prePopulated = prePopulatedValues[field.key];
 
     while (!valid) {
-      const defaultSuffix = field.defaultValue ? ` [default: ${field.defaultValue}]` : "";
+      const defaultValue = prePopulated || field.defaultValue;
+      const defaultSuffix = defaultValue ? ` [default: ${defaultValue}]` : "";
       const answer = await rl.question(`Value for ${field.key}${defaultSuffix}: `);
-      value = answer.trim() || field.defaultValue;
+      value = answer.trim() || defaultValue;
       if (field.required && !value) {
         addLog(state, "warn", `${field.key} is required.`);
         continue;
@@ -560,6 +585,30 @@ function verifyInfraScriptContract(infraDir) {
     shPath,
     ps1Path,
   };
+}
+
+function cleanupOpenClawConfigDir(state, envPath, stepId = "infra") {
+  const configDir = readEnvValue(envPath, "OPENCLAW_CONFIG_DIR");
+  if (!configDir) {
+    throw new Error(`OPENCLAW_CONFIG_DIR is missing in ${envPath}`);
+  }
+
+  const resolved = path.resolve(configDir);
+  const rootPath = path.parse(resolved).root;
+  if (resolved === rootPath) {
+    throw new Error(`Refusing to remove root path as OPENCLAW_CONFIG_DIR: ${resolved}`);
+  }
+
+  if (fs.existsSync(resolved)) {
+    addLog(state, "info", `Cleaning OpenClaw directory before infra setup: ${resolved}`);
+    fs.rmSync(resolved, { recursive: true, force: true });
+    addCheckpoint(state, stepId, `Removed existing OpenClaw directory ${resolved}`);
+  } else {
+    addCheckpoint(state, stepId, `OpenClaw directory did not exist: ${resolved}`);
+  }
+
+  fs.mkdirSync(resolved, { recursive: true });
+  addCheckpoint(state, stepId, `Prepared clean OpenClaw directory ${resolved}`);
 }
 
 async function runInfraScript(state, infraDir) {
@@ -621,39 +670,107 @@ async function runInfraScript(state, infraDir) {
   return { ok: false, reason: "Unsupported platform. Only macOS and Windows are supported." };
 }
 
+async function findOpenClawGatewayContainer(state) {
+  try {
+    addLog(state, "info", "Finding OpenClaw gateway container...");
+    const result = await runCommand("docker", ["ps", "--format", "{{.Names}}"], {
+      shell: false,
+    });
+    if (result.code !== 0) {
+      addLog(state, "warn", "Failed to list docker containers");
+      return null;
+    }
+    const containers = result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const gatewayContainer = containers.find((name) =>
+      name.toLowerCase().includes("openclaw-gateway")
+    );
+    if (gatewayContainer) {
+      addLog(state, "info", `Found OpenClaw gateway container: ${gatewayContainer}`);
+      return gatewayContainer;
+    }
+    addLog(state, "warn", "No container with 'openclaw-gateway' pattern found");
+    return null;
+  } catch (error) {
+    addLog(state, "warn", `Error finding container: ${String(error)}`);
+    return null;
+  }
+}
+
+function updateUiEnvContainerName(state, uiDir, containerName) {
+  try {
+    const uiEnvPath = path.join(uiDir, ".env");
+    if (!fs.existsSync(uiDir)) {
+      addLog(state, "info", "Skipping UI container env: zaloclaw-ui directory not found");
+      return false;
+    }
+    if (!fs.existsSync(uiEnvPath)) {
+      addLog(state, "info", "Skipping UI container env: .env not found");
+      return false;
+    }
+    const uiEnvContent = fs.readFileSync(uiEnvPath, "utf8");
+    const lines = uiEnvContent.split("\n");
+    const outputLines = [];
+    let found = false;
+    for (const line of lines) {
+      if (line.match(/^\s*OPENCLAW_GATEWAY_CONTAINER\s*=/)) {
+        outputLines.push(`OPENCLAW_GATEWAY_CONTAINER=${containerName}`);
+        found = true;
+      } else {
+        outputLines.push(line);
+      }
+    }
+    if (!found) {
+      outputLines.push(`OPENCLAW_GATEWAY_CONTAINER=${containerName}`);
+    }
+    fs.writeFileSync(uiEnvPath, outputLines.join("\n") + "\n", "utf8");
+    addCheckpoint(state, "infra", `Updated UI .env with OPENCLAW_GATEWAY_CONTAINER=${containerName}`);
+    addLog(state, "info", `Updated zaloclaw-ui .env: OPENCLAW_GATEWAY_CONTAINER=${containerName}`);
+    return true;
+  } catch (error) {
+    addLog(state, "warn", `Failed to update UI .env with container name: ${String(error)}`);
+    return false;
+  }
+}
+
 async function maybeRunUi(state, rl, uiDir) {
-  const runNow = await askYesNo(rl, "Setup complete. Start UI now with npm run dev?", false);
+  const runNow = await askYesNo(rl, "Setup complete. Start UI now with docker compose up?", false);
   if (!runNow) {
     state.uiRuntime.status = "skipped";
     state.uiRuntime.lastMessage = "User skipped UI launch";
     return;
   }
 
-  const packageJsonPath = path.join(uiDir, "package.json");
-  if (!fs.existsSync(packageJsonPath)) {
+  const envPath = path.join(uiDir, ".env");
+  if (!fs.existsSync(envPath)) {
     state.uiRuntime.status = "failed";
-    state.uiRuntime.lastMessage = "Cannot start UI: package.json not found";
+    state.uiRuntime.lastMessage = "Cannot start UI: .env not found in zaloclaw-ui";
     addLog(state, "warn", state.uiRuntime.lastMessage);
     return;
   }
 
-  const npmCommand = state.platform.isWindows ? "npm.cmd" : "npm";
-  addLog(state, "info", "Launching UI with npm run dev (foreground process)...");
+  addLog(state, "info", "Launching UI with docker compose up --build -d...");
   state.uiRuntime.status = "running";
 
-  const run = await runCommand(npmCommand, ["run", "dev"], {
+  const run = await runCommand("docker", ["compose", "up", "--build", "-d"], {
     cwd: uiDir,
     shell: false,
     inheritOutput: true,
+    env: {
+      ...process.env,
+    },
   });
 
   state.uiRuntime.exitCode = run.code;
   if (run.code === 0) {
     state.uiRuntime.status = "completed";
-    state.uiRuntime.lastMessage = "UI process exited successfully";
+    state.uiRuntime.lastMessage = "UI docker compose started successfully";
+    addLog(state, "info", "zaloclaw-ui is running via docker compose (detached).");
   } else {
     state.uiRuntime.status = "failed";
-    state.uiRuntime.lastMessage = `UI process exited with code ${run.code}`;
+    state.uiRuntime.lastMessage = `docker compose exited with code ${run.code}`;
   }
 }
 
@@ -735,10 +852,30 @@ async function runSetup() {
       return 1;
     }
     addCheckpoint(state, "env", `Wrote ${envPath}`);
+
+    const gatewayToken = readEnvValue(envPath, "OPENCLAW_GATEWAY_TOKEN");
+    const uiDir = path.join(workspaceRoot, "zaloclaw-ui");
+    if (fs.existsSync(uiDir) && gatewayToken) {
+      addLog(state, "info", "Setting up zaloclaw-ui .env with gateway token...");
+      const uiPrePopulated = {
+        NEXT_PUBLIC_OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+      };
+      const uiEnvEntries = await collectEnvValues(state, rl, uiDir, uiPrePopulated);
+      const uiEnvPath = path.join(uiDir, ".env");
+      fs.writeFileSync(uiEnvPath, serializeEnv(uiEnvEntries), "utf8");
+      const uiEnvVerify = verifyEnvFile(uiEnvPath, uiEnvEntries);
+      if (!uiEnvVerify.ok) {
+        addLog(state, "warn", `UI env pre-flight failed: ${uiEnvVerify.reason}`);
+      } else {
+        addCheckpoint(state, "env", `Wrote ${uiEnvPath}`);
+      }
+    }
+
     setStepStatus(state, "env", "done");
     persistState(state);
 
     setStepStatus(state, "infra", "running");
+    cleanupOpenClawConfigDir(state, envPath, "infra");
     const infraResult = await runInfraScript(state, infraDir);
     if (!infraResult.ok) {
       const reason = infraResult.reason || "Unknown infra script failure";
@@ -751,8 +888,32 @@ async function runSetup() {
     addCheckpoint(state, "infra", "Infra script completed");
     persistState(state);
 
+    let infraGatewayToken = null;
+    let gatewayContainerName = null;
+
+    try {
+      infraGatewayToken = readEnvValue(envPath, "OPENCLAW_GATEWAY_TOKEN");
+      if (infraGatewayToken) {
+        addLog(state, "info", `OpenClaw Gateway Token: ${infraGatewayToken}`);
+      }
+    } catch (error) {
+      addLog(state, "warn", `Could not read gateway token: ${String(error)}`);
+    }
+
+    try {
+      gatewayContainerName = await findOpenClawGatewayContainer(state);
+      if (gatewayContainerName) {
+        const uiDir = path.join(workspaceRoot, "zaloclaw-ui");
+        if (fs.existsSync(uiDir)) {
+          updateUiEnvContainerName(state, uiDir, gatewayContainerName);
+        }
+      }
+    } catch (error) {
+      addLog(state, "warn", `Could not update UI container name: ${String(error)}`);
+    }
+
     setStepStatus(state, "ui", "running");
-    const uiDir = path.join(workspaceRoot, "zaloclaw-ui");
+
     await maybeRunUi(state, rl, uiDir);
     setStepStatus(state, "ui", "done");
     persistState(state);
@@ -762,7 +923,7 @@ async function runSetup() {
     persistState(state);
 
     addLog(state, "info", "Setup workflow finished.");
-    printStepSummary(state);
+    printStepSummary(state, infraGatewayToken);
     return 0;
   } catch (error) {
     addLog(state, "error", `Unexpected setup error: ${String(error)}`);

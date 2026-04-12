@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "setup": "node src/setup-cli.js",
-    "check": "node --check src/setup-cli.js"
+    "check": "node --check src/setup-cli.js",
+    "cleanup-docker": "bash scripts/cleanup-created-dockers.sh"
   },
   "engines": {
     "node": ">=18"
