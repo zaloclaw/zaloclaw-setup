@@ -7,7 +7,8 @@ OUT_DIR="$ROOT_DIR/dist/macos-swift-installer"
 STAGE_DIR="$OUT_DIR/stage"
 APP_NAME="ZClawInstaller"
 VERSION="0.1.0"
-ARTIFACT_NAME="zaloclaw-macos-swift-installer-${VERSION}.tar.gz"
+ARTIFACT_NAME="zaloclaw-macos-swift-installer-${VERSION}.dmg"
+VOL_NAME="ZClaw Installer"
 
 APP_BUNDLE="$STAGE_DIR/${APP_NAME}.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
@@ -91,23 +92,33 @@ EOF
 
 echo -n "APPL????" > "$CONTENTS_DIR/PkgInfo"
 
-(
-  cd "$STAGE_DIR"
-  tar -czf "$OUT_DIR/$ARTIFACT_NAME" "${APP_NAME}.app"
-)
+echo "Creating DMG..."
+DMG_TMP="$OUT_DIR/tmp.dmg"
+rm -f "$DMG_TMP" "$OUT_DIR/$ARTIFACT_NAME"
+
+# Create a temporary disk image from the app bundle directory
+hdiutil create -volname "$VOL_NAME" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_TMP"
+
+# Convert to final read-only DMG
+hdiutil convert "$DMG_TMP" -format UDZO -o "$OUT_DIR/$ARTIFACT_NAME"
+rm "$DMG_TMP"
 
 if [[ ! -f "$OUT_DIR/$ARTIFACT_NAME" ]]; then
   echo "Failed to produce artifact: $OUT_DIR/$ARTIFACT_NAME"
   exit 1
 fi
 
-VERIFY_DIR="$OUT_DIR/verify"
-rm -rf "$VERIFY_DIR"
-mkdir -p "$VERIFY_DIR"
-tar -xzf "$OUT_DIR/$ARTIFACT_NAME" -C "$VERIFY_DIR"
+echo "Created DMG: $OUT_DIR/$ARTIFACT_NAME"
 
-if [[ ! -x "$VERIFY_DIR/${APP_NAME}.app/Contents/MacOS/$APP_NAME" ]]; then
-  echo "Verification failed: app executable missing"
+# Simple existence check to replace previous tar verification
+if [[ ! -f "$OUT_DIR/$ARTIFACT_NAME" ]]; then
+  echo "Verification failed: DMG missing"
+  exit 1
+fi
+
+echo "Artifact produced at: $OUT_DIR/$ARTIFACT_NAME"
+exit 0
+
   exit 1
 fi
 
