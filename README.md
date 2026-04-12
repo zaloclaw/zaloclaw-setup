@@ -39,6 +39,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\installers\setup-windows.p
 
 These launchers install prerequisites (including Node.js when missing), then run the interactive setup workflow.
 
+## Native GUI Installers
+
+For a more integrated experience, use the native GUI installers:
+
+- **macOS (Swift/SwiftUI)**: Native application with real-time logs and easy configuration.
+  - Location: [installers/macos-swift-installer](installers/macos-swift-installer)
+  - Run: `cd installers/macos-swift-installer && ./run-installer-ui.sh`
+- **Windows (Inno Setup)**: Standard Windows installer (`.exe`) that guides you through the setup.
+  - Location: [installers/windows-inno](installers/windows-inno)
+  - Build: [ZaloClawSetup.iss](installers/windows-inno/ZaloClawSetup.iss) (requires Inno Setup 6+)
+
 If Node.js is already installed, you can run directly:
 
 ```bash

@@ -215,3 +215,11 @@ __marimo__/
 
 # OpenSpec workspace artifacts
 openspec/
+
+# Swift / SwiftPM / Xcode artifacts
+.build/
+.swiftpm/
+Package.resolved
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/

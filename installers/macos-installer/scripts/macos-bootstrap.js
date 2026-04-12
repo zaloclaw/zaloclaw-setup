@@ -11,11 +11,13 @@ const REPOSITORIES = [
     name: "zaloclaw-ui",
     url: "https://github.com/zaloclaw/zaloclaw-ui.git",
     folder: "zaloclaw-ui",
+    localSourceMarkers: ["package.json", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"],
   },
   {
     name: "zaloclaw-infra",
     url: "https://github.com/zaloclaw/zaloclaw-infra.git",
     folder: "zaloclaw-infra",
+    localSourceMarkers: ["zaloclaw-docker-setup.sh"],
   },
 ];
 
@@ -32,7 +34,7 @@ function parseArgs(argv) {
   const parsed = {
     workspaceRoot: process.cwd(),
     sourceRoot: null,
-    cloneMode: "prompt",
+    cloneMode: "reuse",
     provider: null,
     providerApiKey: null,
     litellmMasterKey: null,
@@ -40,6 +42,7 @@ function parseArgs(argv) {
     launchUi: null,
     installMissingPrerequisites: true,
     infraScriptPath: null,
+    infraTimeoutSeconds: 60,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -94,6 +97,15 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (value === "--infra-timeout-seconds" && next) {
+      const parsedTimeout = Number.parseInt(next, 10);
+      if (Number.isFinite(parsedTimeout) && parsedTimeout > 0) {
+        parsed.infraTimeoutSeconds = parsedTimeout;
+      }
+      i += 1;
+      continue;
+    }
+
     if (value === "--launch-ui") {
       parsed.launchUi = true;
       continue;
@@ -126,18 +138,98 @@ function isDirectory(targetPath) {
   }
 }
 
+function directoryHasMeaningfulContents(targetPath) {
+  try {
+    return fs.readdirSync(targetPath).some((entry) => entry !== ".git" && entry !== ".DS_Store");
+  } catch {
+    return false;
+  }
+}
+
+function canUseLocalSourceRepo(repo, sourcePath) {
+  if (!isDirectory(sourcePath)) {
+    return false;
+  }
+
+  const markers = Array.isArray(repo.localSourceMarkers) ? repo.localSourceMarkers : [];
+  if (markers.length > 0) {
+    return markers.some((relativePath) => fs.existsSync(path.join(sourcePath, relativePath)));
+  }
+
+  return directoryHasMeaningfulContents(sourcePath);
+}
+
 function runCommand(command, args, options = {}) {
   const cwd = options.cwd || process.cwd();
   const shell = Boolean(options.shell);
   const inheritOutput = Boolean(options.inheritOutput);
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : null;
+  const detached = process.platform !== "win32";
+  const startedAtMs = Date.now();
+  const renderedArgs = Array.isArray(args) ? args.map((arg) => JSON.stringify(String(arg))).join(" ") : "";
+  const renderedCommand = `${command}${renderedArgs ? ` ${renderedArgs}` : ""}`;
+
+  console.log(
+    `[runCommand:start] cmd=${renderedCommand} cwd=${JSON.stringify(cwd)} shell=${shell} inheritOutput=${inheritOutput} timeoutMs=${timeoutMs ?? "none"}`,
+  );
 
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
       shell,
+      detached,
       stdio: inheritOutput ? "inherit" : "pipe",
       env: options.env || process.env,
     });
+
+    console.log(`[runCommand:spawned] pid=${child.pid ?? "unknown"} cmd=${renderedCommand}`);
+
+    let didTimeout = false;
+    let timeoutHandle = null;
+    let forceKillHandle = null;
+    let settled = false;
+
+    const tryKillWithSignal = (signal) => {
+      if (!child.pid) {
+        return;
+      }
+
+      // On POSIX, kill the entire spawned process group to avoid orphaned grandchildren.
+      if (detached) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          // Fall back to killing only the direct child.
+        }
+      }
+
+      try {
+        child.kill(signal);
+      } catch {
+        // Ignore signal errors; close/error handlers resolve promise.
+      }
+    };
+
+    if (timeoutMs) {
+      timeoutHandle = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        didTimeout = true;
+        console.warn(`[runCommand:timeout] pid=${child.pid ?? "unknown"} cmd=${renderedCommand} timeoutMs=${timeoutMs}`);
+        tryKillWithSignal("SIGTERM");
+
+        // Escalate if process tree does not exit promptly after SIGTERM.
+        forceKillHandle = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          console.warn(`[runCommand:force-kill] pid=${child.pid ?? "unknown"} cmd=${renderedCommand}`);
+          tryKillWithSignal("SIGKILL");
+        }, 10000);
+      }, timeoutMs);
+    }
 
     let stdout = "";
     let stderr = "";
@@ -157,11 +249,33 @@ function runCommand(command, args, options = {}) {
     }
 
     child.on("close", (code) => {
-      resolve({ code: code == null ? 1 : code, stdout, stderr });
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      if (forceKillHandle) {
+        clearTimeout(forceKillHandle);
+      }
+      const durationMs = Date.now() - startedAtMs;
+      console.log(
+        `[runCommand:close] pid=${child.pid ?? "unknown"} code=${code == null ? 1 : code} timedOut=${didTimeout} durationMs=${durationMs} cmd=${renderedCommand}`,
+      );
+      resolve({ code: code == null ? 1 : code, stdout, stderr, timedOut: didTimeout });
     });
 
     child.on("error", (error) => {
-      resolve({ code: 1, stdout, stderr: String(error) });
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      if (forceKillHandle) {
+        clearTimeout(forceKillHandle);
+      }
+      const durationMs = Date.now() - startedAtMs;
+      console.error(
+        `[runCommand:error] pid=${child.pid ?? "unknown"} timedOut=${didTimeout} durationMs=${durationMs} cmd=${renderedCommand} error=${String(error)}`,
+      );
+      resolve({ code: 1, stdout, stderr: String(error), timedOut: didTimeout });
     });
   });
 }
@@ -355,14 +469,141 @@ async function ensureLitellmKey(rl, args) {
   return value;
 }
 
+function providerValidationConfig(provider, apiKey) {
+  if (provider === "openai") {
+    return {
+      url: "https://api.openai.com/v1/models",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    };
+  }
+
+  if (provider === "google") {
+    return {
+      url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+      headers: {},
+    };
+  }
+
+  if (provider === "anthropic") {
+    return {
+      url: "https://api.anthropic.com/v1/models",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+    };
+  }
+
+  return {
+    // /models is publicly accessible on OpenRouter; /credits requires auth and validates key.
+    url: "https://openrouter.ai/api/v1/credits",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  };
+}
+
+async function validateProviderApiKey(provider, apiKey) {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const config = providerValidationConfig(provider, apiKey);
+    const response = await fetch(config.url, {
+      method: "GET",
+      headers: config.headers,
+      signal: controller.signal,
+    });
+
+    if (response.ok) {
+      return { ok: true, reason: null };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, reason: "API key is invalid or unauthorized." };
+    }
+
+    if (response.status === 429) {
+      return { ok: false, reason: "Rate limited while validating API key. Please retry in a moment." };
+    }
+
+    const bodyText = await response.text();
+    const shortDetail = String(bodyText || "").split(/\r?\n/)[0].slice(0, 200);
+    return {
+      ok: false,
+      reason: `Provider validation returned HTTP ${response.status}${shortDetail ? `: ${shortDetail}` : ""}`,
+    };
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    if (message.toLowerCase().includes("abort")) {
+      return { ok: false, reason: "Validation request timed out. Check network/VPN and retry." };
+    }
+    return { ok: false, reason: `Validation request failed: ${message}` };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function ensureValidatedProviderKey(rl, args, provider) {
+  let attemptedWithArg = false;
+
+  while (true) {
+    const providerApiKey = await ensureProviderKey(
+      rl,
+      attemptedWithArg ? { ...args, providerApiKey: null } : args,
+      provider,
+    );
+
+    console.log("Validating provider API key...");
+    const validation = await validateProviderApiKey(provider, providerApiKey);
+    if (validation.ok) {
+      console.log("Provider API key validation succeeded.");
+      return providerApiKey;
+    }
+
+    console.warn(`Provider API key validation failed: ${validation.reason}`);
+
+    if (args.providerApiKey && !attemptedWithArg) {
+      throw new Error("Provided --provider-api-key failed validation. Please pass a valid key.");
+    }
+
+    attemptedWithArg = true;
+    const retry = await askYesNo(rl, "API key validation failed. Enter a different key?", true);
+    if (!retry) {
+      throw new Error("Setup cancelled because provider API key could not be validated.");
+    }
+  }
+}
+
 async function ensureConfigDir(rl, args) {
   if (args.openclawConfigDir && args.openclawConfigDir.trim()) {
-    return args.openclawConfigDir.trim();
+    return normalizePathInput(args.openclawConfigDir);
   }
 
   const defaultDir = path.join(os.homedir(), ".openclaw_z");
   const entered = (await rl.question(`OPENCLAW_CONFIG_DIR [default: ${defaultDir}]: `)).trim();
-  return entered || defaultDir;
+  return normalizePathInput(entered || defaultDir);
+}
+
+function normalizePathInput(value) {
+  let normalized = String(value || "").trim();
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
+}
+
+function dockerDesktopGuidanceMessage() {
+  return [
+    "Docker Desktop is required for ZaloClaw setup.",
+    "Download it from https://www.docker.com/products/docker-desktop/",
+    "After installing, open Docker Desktop, finish the first-run setup, wait until Docker is running, then retry setup.",
+  ].join(" ");
 }
 
 async function commandExists(command) {
@@ -432,7 +673,7 @@ async function ensureDockerDesktopInstalled(state) {
 
   addLog(state, "warn", "Docker Desktop app is not installed.");
   if (!state.runtime.installMissingPrerequisites) {
-    addLog(state, "warn", "Automatic install disabled for Docker Desktop.");
+    addLog(state, "error", `${dockerDesktopGuidanceMessage()} Automatic install is disabled.`);
     return false;
   }
 
@@ -458,6 +699,7 @@ async function ensureDockerDesktopInstalled(state) {
         if (install.code !== 0) {
           addLog(state, "warn", `Docker Desktop retry install failed with code ${install.code}.`);
           addLog(state, "warn", `You can restore the previous symlink with: mv \"${backupPath}\" \"${conflictPath}\"`);
+          addLog(state, "error", dockerDesktopGuidanceMessage());
           return false;
         }
       } else {
@@ -466,6 +708,7 @@ async function ensureDockerDesktopInstalled(state) {
           "error",
           `Cannot auto-resolve conflict at ${conflictPath}. Remove or rename that file, then rerun setup.`,
         );
+        addLog(state, "error", dockerDesktopGuidanceMessage());
         return false;
       }
     } else {
@@ -474,11 +717,16 @@ async function ensureDockerDesktopInstalled(state) {
       if (firstLine) {
         addLog(state, "warn", `Install error: ${firstLine}`);
       }
+      addLog(state, "error", dockerDesktopGuidanceMessage());
       return false;
     }
   }
 
-  return isDockerDesktopInstalled();
+  const installed = await isDockerDesktopInstalled();
+  if (!installed) {
+    addLog(state, "error", dockerDesktopGuidanceMessage());
+  }
+  return installed;
 }
 
 async function ensurePrerequisites(state) {
@@ -510,7 +758,7 @@ async function ensurePrerequisites(state) {
     addLog(
       state,
       "error",
-      "Docker CLI command is unavailable even though Docker Desktop is installed. Open Docker Desktop once, then retry setup.",
+      `Docker CLI command is unavailable even though Docker Desktop is installed. ${dockerDesktopGuidanceMessage()}`,
     );
     missing.push("Docker CLI");
     return missing;
@@ -559,7 +807,10 @@ async function waitForDockerDaemonReady(state, options = {}) {
   let launchedDockerDesktop = false;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const dockerInfo = await runCommand("docker", ["info"], { shell: false });
+    const dockerInfo = await runCommand("docker", ["info"], {
+      shell: false,
+      timeoutMs: 15000,
+    });
     if (dockerInfo.code === 0) {
       if (attempt > 1) {
         addLog(state, "info", "Docker daemon is ready. Continuing setup.");
@@ -586,7 +837,10 @@ async function waitForDockerDaemonReady(state, options = {}) {
         addCheckpoint(state, stepId, `Docker daemon check failed: ${detail.split(/\r?\n/)[0]}`);
       }
 
-      const launch = await runCommand("open", ["-a", "Docker"], { shell: false });
+      const launch = await runCommand("open", ["-a", "Docker"], {
+        shell: false,
+        timeoutMs: 10000,
+      });
       if (launch.code === 0) {
         launchedDockerDesktop = true;
         addLog(state, "info", "Requested Docker Desktop launch.");
@@ -607,7 +861,10 @@ async function waitForDockerDaemonReady(state, options = {}) {
       : "Docker daemon is not reachable. Start Docker Desktop, wait until it is running, then retry setup.",
   );
 
-  const finalCheck = await runCommand("docker", ["info"], { shell: false });
+  const finalCheck = await runCommand("docker", ["info"], {
+    shell: false,
+    timeoutMs: 15000,
+  });
   const finalDetail = (finalCheck.stderr || finalCheck.stdout || "").trim();
   if (finalDetail) {
     addCheckpoint(state, stepId, `Docker daemon still unavailable: ${finalDetail.split(/\r?\n/)[0]}`);
@@ -643,6 +900,58 @@ async function decideCloneMode(rl, args) {
   return "fail";
 }
 
+async function shutdownExistingComposeStacks(state) {
+  const infraDir = path.join(state.workspaceRoot, "zaloclaw-infra");
+  const uiDir = path.join(state.workspaceRoot, "zaloclaw-ui");
+
+  if (!fs.existsSync(infraDir) || !fs.existsSync(uiDir)) {
+    return;
+  }
+
+  addLog(state, "info", "Detected existing zaloclaw-infra and zaloclaw-ui folders. Stopping existing compose stacks before setup.");
+
+  const infraComposeFiles = [path.join(infraDir, "docker-compose.yml")];
+  const infraExtraCompose = path.join(infraDir, "docker-compose.extra.yml");
+  if (fs.existsSync(infraExtraCompose)) {
+    infraComposeFiles.push(infraExtraCompose);
+  }
+
+  const existingInfraComposeFiles = infraComposeFiles.filter((filePath) => fs.existsSync(filePath));
+  if (existingInfraComposeFiles.length > 0) {
+    const infraArgs = existingInfraComposeFiles.flatMap((filePath) => ["-f", filePath]);
+    const down = await runCommand("docker", ["compose", ...infraArgs, "down", "--remove-orphans"], {
+      cwd: infraDir,
+      shell: false,
+      inheritOutput: true,
+      timeoutMs: 120000,
+    });
+
+    if (down.code === 0) {
+      addLog(state, "info", "Stopped existing infra compose stack.");
+      addCheckpoint(state, "platform", "Stopped existing infra compose stack before setup");
+    } else {
+      addLog(state, "warn", `Failed to stop infra compose stack cleanly (code ${down.code}).`);
+    }
+  }
+
+  const uiComposePath = path.join(uiDir, "docker-compose.yml");
+  if (fs.existsSync(uiComposePath)) {
+    const down = await runCommand("docker", ["compose", "-f", uiComposePath, "down", "--remove-orphans"], {
+      cwd: uiDir,
+      shell: false,
+      inheritOutput: true,
+      timeoutMs: 120000,
+    });
+
+    if (down.code === 0) {
+      addLog(state, "info", "Stopped existing UI compose stack.");
+      addCheckpoint(state, "platform", "Stopped existing UI compose stack before setup");
+    } else {
+      addLog(state, "warn", `Failed to stop UI compose stack cleanly (code ${down.code}).`);
+    }
+  }
+}
+
 async function ensureRepo(state, repo, cloneMode) {
   const targetPath = path.join(state.workspaceRoot, repo.folder);
   const sourceRoot = state.runtime.sourceRoot;
@@ -663,10 +972,15 @@ async function ensureRepo(state, repo, cloneMode) {
     }
   }
 
-  if (sourcePath && isDirectory(sourcePath)) {
+  if (sourcePath && canUseLocalSourceRepo(repo, sourcePath)) {
     fs.cpSync(sourcePath, targetPath, { recursive: true });
     addCheckpoint(state, "clone", `${repo.folder}: copied from local source ${sourcePath}`);
     return true;
+  }
+
+  if (sourcePath && isDirectory(sourcePath)) {
+    addLog(state, "warn", `Ignoring unusable local source for ${repo.folder}: ${sourcePath}`);
+    addCheckpoint(state, "clone", `${repo.folder}: skipped unusable local source ${sourcePath}`);
   }
 
   const clone = await runCommand("git", ["clone", repo.url, repo.folder], {
@@ -843,7 +1157,7 @@ function writeEnv(state) {
 }
 
 function cleanupOpenClawConfigDir(state, stepId = "infra") {
-  const configDir = state.runtime.openclawConfigDir;
+  const configDir = normalizePathInput(state.runtime.openclawConfigDir);
   if (!configDir) {
     throw new Error("OPENCLAW_CONFIG_DIR is empty.");
   }
@@ -854,16 +1168,98 @@ function cleanupOpenClawConfigDir(state, stepId = "infra") {
     throw new Error(`Refusing to remove root path as OPENCLAW_CONFIG_DIR: ${resolved}`);
   }
 
-  if (fs.existsSync(resolved)) {
-    addLog(state, "info", `Cleaning OpenClaw directory before infra setup: ${resolved}`);
-    fs.rmSync(resolved, { recursive: true, force: true });
-    addCheckpoint(state, stepId, `Removed existing OpenClaw directory ${resolved}`);
-  } else {
+  if (!fs.existsSync(resolved)) {
     addCheckpoint(state, stepId, `OpenClaw directory did not exist: ${resolved}`);
+    fs.mkdirSync(resolved, { recursive: true });
+    addCheckpoint(state, stepId, `Prepared clean OpenClaw directory ${resolved}`);
+    state.runtime.openclawConfigDir = resolved;
+    return;
   }
 
-  fs.mkdirSync(resolved, { recursive: true });
-  addCheckpoint(state, stepId, `Prepared clean OpenClaw directory ${resolved}`);
+  addLog(state, "info", `Cleaning OpenClaw directory before infra setup: ${resolved}`);
+
+  try {
+    fs.rmSync(resolved, { recursive: true, force: true });
+    fs.mkdirSync(resolved, { recursive: true });
+    addCheckpoint(state, stepId, `Removed and recreated OpenClaw directory ${resolved}`);
+  } catch (error) {
+    const message = String(error);
+    if (message.includes("ENOTEMPTY") || message.includes("EBUSY")) {
+      // If directory is an active mountpoint, clean contents instead of removing mount root.
+      const entries = fs.readdirSync(resolved);
+      for (const entry of entries) {
+        fs.rmSync(path.join(resolved, entry), { recursive: true, force: true });
+      }
+      addCheckpoint(state, stepId, `Cleaned OpenClaw directory contents (mount-safe) ${resolved}`);
+    } else {
+      throw error;
+    }
+  }
+
+  state.runtime.openclawConfigDir = resolved;
+}
+
+function ensureGogInstallCompatibility(state, stepId = "infra") {
+  const infraDir = path.join(state.workspaceRoot, "zaloclaw-infra");
+  const dockerfilePath = path.join(infraDir, "Dockerfile.zaloclaw");
+
+  if (!fs.existsSync(dockerfilePath)) {
+    addCheckpoint(state, stepId, `Skipped gog compatibility patch: missing ${dockerfilePath}`);
+    return;
+  }
+
+  const content = fs.readFileSync(dockerfilePath, "utf8");
+  const compatibleMarker = "for candidate_arch in \"$primary_arch\" \"$fallback_arch\"; do";
+  if (content.includes(compatibleMarker)) {
+    addCheckpoint(state, stepId, "gog install block already compatible");
+    return;
+  }
+
+  const replacement = [
+    "RUN set -eux; \\",
+    "    raw_arch=\"$(uname -m)\"; \\",
+    "    case \"$raw_arch\" in \\",
+    "        x86_64|amd64) primary_arch=\"amd64\" ;; \\",
+    "        aarch64|arm64|armv8*) primary_arch=\"arm64\" ;; \\",
+    "        *) primary_arch=\"$(dpkg --print-architecture 2>/dev/null || true)\" ;; \\",
+    "    esac; \\",
+    "    if [ -z \"$primary_arch\" ]; then primary_arch=\"amd64\"; fi; \\",
+    "    if [ \"$primary_arch\" = \"amd64\" ]; then fallback_arch=\"arm64\"; else fallback_arch=\"amd64\"; fi; \\",
+    "    base_url=\"https://github.com/steipete/gogcli/releases/download/v${GOG_VERSION}\"; \\",
+    "    tmpdir=\"$(mktemp -d)\"; \\",
+    "    trap 'rm -rf \"$tmpdir\"' EXIT; \\",
+    "    archive=\"\"; \\",
+    "    selected_arch=\"\"; \\",
+    "    for candidate_arch in \"$primary_arch\" \"$fallback_arch\"; do \\",
+    "      [ -n \"$candidate_arch\" ] || continue; \\",
+    "      for candidate in \\",
+    "        \"gogcli_${GOG_VERSION}_linux_${candidate_arch}.tar.gz\" \\",
+    "        \"gog_${GOG_VERSION}_linux_${candidate_arch}.tar.gz\"; do \\",
+    "        if curl -fsSL \"$base_url/$candidate\" -o \"$tmpdir/gogcli.tar.gz\"; then archive=\"$candidate\"; selected_arch=\"$candidate_arch\"; break 2; fi; \\",
+    "      done; \\",
+    "    done; \\",
+    "    if [ -z \"$archive\" ]; then echo \"ERROR: Unable to download gog archive (raw_arch=$raw_arch, primary=$primary_arch, fallback=$fallback_arch)\" >&2; exit 1; fi; \\",
+    "    echo \"==> Downloaded $archive for arch $selected_arch\"; \\",
+    "    tar -xzf \"$tmpdir/gogcli.tar.gz\" -C \"$tmpdir\"; \\",
+    "    bin_path=\"$(find \"$tmpdir\" -maxdepth 3 -type f -name gog | head -n 1)\"; \\",
+    "    if [ -z \"$bin_path\" ]; then bin_path=\"$(find \"$tmpdir\" -maxdepth 3 -type f -name gogcli | head -n 1)\"; fi; \\",
+    "    if [ -z \"$bin_path\" ]; then echo \"ERROR: gog binary not found in downloaded archive\" >&2; exit 1; fi; \\",
+    "    install -m 0755 \"$bin_path\" /usr/local/bin/gog",
+  ].join("\n");
+
+  const updated = content.replace(
+    /RUN set -eux; \\\n+[\s\S]*?install -m 0755 "[^\n]+" \/usr\/local\/bin\/gog/g,
+    replacement,
+  );
+
+  if (updated === content) {
+    addCheckpoint(state, stepId, "Skipped gog compatibility patch: expected block not found");
+    return;
+  }
+
+  fs.writeFileSync(dockerfilePath, updated, "utf8");
+  addCheckpoint(state, stepId, `Applied gog compatibility patch to ${dockerfilePath}`);
+  addLog(state, "info", "Applied gog install compatibility patch for Dockerfile.zaloclaw");
 }
 
 async function findOpenClawGatewayContainer(state) {
@@ -871,6 +1267,7 @@ async function findOpenClawGatewayContainer(state) {
     addLog(state, "info", "Finding OpenClaw gateway container...");
     const result = await runCommand("docker", ["ps", "--format", "{{.Names}}"], {
       shell: false,
+      timeoutMs: 15000,
     });
     if (result.code !== 0) {
       addLog(state, "warn", "Failed to list docker containers");
@@ -934,8 +1331,13 @@ function updateUiEnvContainerName(state, uiDir, containerName) {
 async function runInfra(state) {
   const infraDir = path.join(state.workspaceRoot, "zaloclaw-infra");
   const scriptPath = state.runtime.infraScriptPath || path.join(infraDir, "zaloclaw-docker-setup.sh");
+  const infraTimeoutSeconds = Number.isFinite(state.runtime.infraTimeoutSeconds) && state.runtime.infraTimeoutSeconds > 0
+    ? state.runtime.infraTimeoutSeconds
+    : 60;
 
   cleanupOpenClawConfigDir(state, "infra");
+  ensureGogInstallCompatibility(state, "infra");
+  addLog(state, "info", "Checking Docker daemon readiness for infra step...");
 
   if (!(await waitForDockerDaemonReady(state, { stepId: "infra", waitSeconds: 60, intervalSeconds: 5 }))) {
     throw new Error("Docker daemon is not running. Please start Docker Desktop and retry.");
@@ -945,25 +1347,43 @@ async function runInfra(state) {
     throw new Error(`Infra script not found: ${scriptPath}`);
   }
 
+  addLog(
+    state,
+    "info",
+    `Running infra script: ${scriptPath} (timeout ${infraTimeoutSeconds}s). This step can take several minutes.`,
+  );
   const run = await runCommand("bash", [scriptPath], {
     cwd: infraDir,
     shell: false,
     inheritOutput: true,
+    timeoutMs: infraTimeoutSeconds * 1000,
     env: {
       ...process.env,
       ZALOC_SETUP_CONTRACT_VERSION: "1",
     },
   });
 
+  if (run.timedOut) {
+    throw new Error(
+      `Infra script exceeded timeout (${infraTimeoutSeconds}s). Re-run with --infra-timeout-seconds for longer operations.`,
+    );
+  }
+
   if (run.code !== 0) {
     throw new Error(`Infra script exited with code ${run.code}`);
   }
 
+  addLog(state, "info", "[phase] Post-healthy: syncing gateway token from infra .env to UI .env");
   // Infra setup may rewrite OPENCLAW_GATEWAY_TOKEN; sync UI .env from final infra .env.
   syncUiGatewayTokenFromInfra(state, { stepId: "infra", requireToken: true });
+
+  addLog(state, "info", "[phase] Post-healthy: validating gateway token consistency between infra and UI");
   ensureUiGatewayTokenReady(state, "infra");
 
+  addLog(state, "info", "[phase] Post-healthy: starting UI-related services from infra compose (if present)");
   await startUiComposeServicesIfPresent(state, infraDir);
+
+  addLog(state, "info", "[phase] Post-healthy: starting standalone UI compose stack from zaloclaw-ui (if present)");
   await startUiComposeRepositoryIfPresent(state);
 
   addCheckpoint(state, "infra", "Infra script completed");
@@ -987,6 +1407,7 @@ async function startUiComposeRepositoryIfPresent(state) {
       cwd: uiDir,
       shell: false,
       inheritOutput: true,
+      timeoutMs: 300000,
     });
 
     if (up.code !== 0) {
@@ -1031,6 +1452,7 @@ async function startUiComposeServicesIfPresent(state, infraDir) {
   const list = await runCommand("docker", ["compose", ...composeArgs, "config", "--services"], {
     cwd: infraDir,
     shell: false,
+    timeoutMs: 20000,
   });
 
   if (list.code !== 0) {
@@ -1057,6 +1479,7 @@ async function startUiComposeServicesIfPresent(state, infraDir) {
     cwd: infraDir,
     shell: false,
     inheritOutput: true,
+    timeoutMs: 180000,
   });
 
   if (up.code !== 0) {
@@ -1081,13 +1504,38 @@ async function maybeLaunchUi(state, rl, args) {
     return;
   }
 
-  if (!fs.existsSync(path.join(uiDir, "package.json"))) {
+  if (!fs.existsSync(uiDir)) {
     state.uiRuntime.status = "failed";
-    state.uiRuntime.lastMessage = "Cannot start UI: package.json not found";
+    state.uiRuntime.lastMessage = "Cannot start UI: zaloclaw-ui directory not found";
+    addLog(state, "warn", "Skipping UI launch: zaloclaw-ui directory not found");
     return;
   }
 
-  state.uiRuntime.status = "running";
+  if (!fs.existsSync(path.join(uiDir, "package.json"))) {
+    state.uiRuntime.status = "failed";
+    state.uiRuntime.lastMessage = "Cannot start UI: package.json not found";
+    addLog(state, "warn", "Skipping UI launch: package.json not found in zaloclaw-ui");
+    return;
+  }
+
+  addLog(state, "info", "Installing zaloclaw-ui dependencies (npm install)...");
+  const install = await runCommand("npm", ["install", "--no-audit", "--no-fund"], {
+    cwd: uiDir,
+    shell: false,
+    inheritOutput: true,
+    timeoutMs: 300000,
+  });
+
+  if (install.code !== 0) {
+    state.uiRuntime.status = "failed";
+    state.uiRuntime.lastMessage = `npm install failed with code ${install.code}`;
+    addLog(state, "warn", `zaloclaw-ui npm install failed (code ${install.code}), skipping UI start`);
+    return;
+  }
+
+  addCheckpoint(state, "ui", "npm install completed");
+
+  addLog(state, "info", "Starting zaloclaw-ui dev server in background...");
   const child = spawn("npm", ["run", "dev"], {
     cwd: uiDir,
     detached: true,
@@ -1097,7 +1545,9 @@ async function maybeLaunchUi(state, rl, args) {
   child.unref();
   state.uiRuntime.pid = child.pid || null;
   state.uiRuntime.status = "running";
-  state.uiRuntime.lastMessage = "UI launched in background";
+  state.uiRuntime.lastMessage = "zaloclaw-ui dev server launched in background";
+  addCheckpoint(state, "ui", `zaloclaw-ui started (pid ${state.uiRuntime.pid})`);
+  addLog(state, "info", `zaloclaw-ui dev server started (pid ${state.uiRuntime.pid}). Open http://localhost:3000 when ready.`);
 }
 
 async function main() {
@@ -1119,8 +1569,10 @@ async function main() {
     console.log("\n=== ZaloClaw Local Setup (macOS Installer) ===");
     console.log(`Workspace: ${state.workspaceRoot}`);
 
+    await shutdownExistingComposeStacks(state);
+
     const provider = await pickProvider(rl, args);
-    const providerApiKey = await ensureProviderKey(rl, args, provider);
+    const providerApiKey = await ensureValidatedProviderKey(rl, args, provider);
     const litellmMasterKey = await ensureLitellmKey(rl, args);
     const openclawConfigDir = await ensureConfigDir(rl, args);
     const cloneMode = await decideCloneMode(rl, args);
@@ -1135,6 +1587,7 @@ async function main() {
       launchUi: args.launchUi,
       installMissingPrerequisites: args.installMissingPrerequisites,
       infraScriptPath: args.infraScriptPath,
+      infraTimeoutSeconds: args.infraTimeoutSeconds,
     };
 
     saveState(state);
@@ -1188,6 +1641,7 @@ async function main() {
 
     let gatewayToken = null;
     try {
+      addLog(state, "info", "[phase] Post-infra: reading gateway token from infra .env");
       const infraDir = path.join(state.workspaceRoot, "zaloclaw-infra");
       const infraEnvPath = path.join(infraDir, ".env");
       gatewayToken = readEnvValue(infraEnvPath, "OPENCLAW_GATEWAY_TOKEN");
@@ -1199,10 +1653,12 @@ async function main() {
     }
 
     try {
+      addLog(state, "info", "[phase] Post-infra: discovering openclaw-gateway container name");
       const containerName = await findOpenClawGatewayContainer(state);
       if (containerName) {
         const uiDir = path.join(state.workspaceRoot, "zaloclaw-ui");
         if (fs.existsSync(uiDir)) {
+          addLog(state, "info", "[phase] Post-infra: syncing gateway container name into UI .env");
           updateUiEnvContainerName(state, uiDir, containerName);
         }
       }
@@ -1211,8 +1667,13 @@ async function main() {
     }
 
     setStepStatus(state, "ui", "running");
+    addLog(state, "info", "[phase] UI: evaluating UI launch flow");
     await maybeLaunchUi(state, rl, args);
-    setStepStatus(state, "ui", "done");
+    if (state.uiRuntime.status === "failed") {
+      setStepStatus(state, "ui", "failed", state.uiRuntime.lastMessage || "UI launch failed");
+    } else {
+      setStepStatus(state, "ui", "done");
+    }
 
     state.setupCompletion.status = "complete";
     state.setupCompletion.completedAt = new Date().toISOString();
