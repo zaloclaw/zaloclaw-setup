@@ -1,33 +1,36 @@
-# ZaloClaw Swift Installer (macOS)
+# ZClaw Installer (macOS/Swift)
 
-This directory contains the new native macOS installer shell scaffold.
+Native SwiftUI desktop application to automate setup for ZClaw.
+
+## Features
+
+- **SwiftUI desktop app**: Native shell for setup orchestration.
+- **Real-time Output**: Embedded console view with live stdout/stderr streaming.
+- **Configuration Form**: Integrated UI for setup inputs (workspace, config dir, provider, keys, clone/options).
+- **Donate QR Code**: Integrated donate button/QR code to support the project.
+- **Completion Artifacts**: Easy access to crucial setup values:
+  - `OPENCLAW_GATEWAY_TOKEN`
+  - `OPENCLAW_GATEWAY_CONTAINER`
+- **Settings Persistence**: Saves your previous inputs to `~/Library/Application Support/ZClawInstaller/settings.json`.
+
+## Quick Start
+
+```bash
+./run-installer-ui.sh
+```
+
+## Build Artifact
+
+```bash
+./build-swift-installer-artifact.sh
+```
+This produces a `.tar.gz` bundle containing the `.app` package in `../../dist/macos-swift-installer`.
 
 ## Scope
 
-- New native shell lives only in `installers/macos-swift-installer/`.
-- Existing AppleScript installer in `installers/macos-installer/` remains unchanged and serves as fallback/reference.
+- New native shell lives in `installers/macos-swift-installer/`.
+- Fallback existing AppleScript installer in `installers/macos-installer/` remains as reference.
 
-## What This Scaffold Provides
-
-- SwiftUI desktop app shell for setup orchestration.
-- Embedded live output panel (console view) with stdout/stderr streaming.
-- In-app configuration form for required setup inputs (workspace, config dir, provider, keys, clone/options).
-- Basic status timeline mapped from installer logs.
-- Completion artifact extraction for:
-  - `OPENCLAW_GATEWAY_TOKEN`
-  - `OPENCLAW_GATEWAY_CONTAINER`
-
-## Run Locally
-
-```bash
-cd installers/macos-swift-installer
-swift run
-```
-
-If `swift run` does not foreground the window in your terminal environment, use:
-
-```bash
-cd installers/macos-swift-installer
 bash run-installer-ui.sh
 ```
 
