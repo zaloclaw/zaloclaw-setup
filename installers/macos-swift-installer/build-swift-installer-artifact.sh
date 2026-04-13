@@ -61,6 +61,10 @@ cp "$BACKEND_BOOTSTRAP_SRC" "$CONTENTS_DIR/installers/macos-installer/scripts/ma
 chmod +x "$CONTENTS_DIR/installers/macos-installer/setup-macos-installer.sh"
 chmod +x "$CONTENTS_DIR/installers/macos-installer/scripts/macos-bootstrap.js"
 
+# Explicitly ad-hoc sign the app bundle including nested contents to satisfy Gatekeeper
+echo "Ad-hoc signing .app bundle..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+
 cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,6 +95,31 @@ cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 EOF
 
 echo -n "APPL????" > "$CONTENTS_DIR/PkgInfo"
+
+# Pre-image verification: Ensure the binary exists and is executable
+if [[ ! -x "$MACOS_DIR/$APP_NAME" ]]; then
+  echo "Internal error: Binary not found in bundle before DMG creation"
+  exit 1
+fi
+
+# Create a helper double-clickable script in the DMG root so users can bypass
+# the Gatekeeper "Apple could not verify" warning without using the terminal.
+BYPASS_SCRIPT="$STAGE_DIR/Open ZClaw Installer.command"
+cat > "$BYPASS_SCRIPT" <<'BYPASS'
+#!/usr/bin/env bash
+# This script removes the macOS quarantine flag placed on files downloaded from
+# the internet, then opens ZClaw Installer. This is required because the app is
+# not notarized with an Apple Developer ID certificate.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP="$SCRIPT_DIR/ZClawInstaller.app"
+if [[ ! -d "$APP" ]]; then
+  osascript -e 'display alert "ZClawInstaller.app not found." message "Make sure this script is in the same folder as ZClawInstaller.app."'
+  exit 1
+fi
+xattr -cr "$APP"
+open "$APP"
+BYPASS
+chmod +x "$BYPASS_SCRIPT"
 
 echo "Creating DMG..."
 DMG_TMP="$OUT_DIR/tmp.dmg"
