@@ -19,6 +19,7 @@ RUNNER_SRC="$SCRIPT_DIR/scripts/macos-swift-runner.sh"
 BACKEND_DIR_SRC="$ROOT_DIR/installers/macos-installer"
 BACKEND_BOOTSTRAP_SRC="$BACKEND_DIR_SRC/scripts/macos-bootstrap.js"
 BINARY_SRC="$SCRIPT_DIR/.build/release/ZClawInstaller"
+RESOURCE_BUNDLE_NAME="ZClawInstaller_ZClawInstaller.bundle"
 
 mkdir -p "$OUT_DIR"
 rm -rf "$STAGE_DIR"
@@ -32,6 +33,12 @@ echo "Building release binary..."
 
 if [[ ! -x "$BINARY_SRC" ]]; then
   echo "Missing release binary: $BINARY_SRC"
+  exit 1
+fi
+
+RESOURCE_BUNDLE_SRC="$(find "$SCRIPT_DIR/.build" -type d -path "*/release/${RESOURCE_BUNDLE_NAME}" -print -quit || true)"
+if [[ -z "$RESOURCE_BUNDLE_SRC" ]]; then
+  echo "Missing resource bundle: ${RESOURCE_BUNDLE_NAME}"
   exit 1
 fi
 
@@ -53,6 +60,8 @@ fi
 cp "$BINARY_SRC" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
+cp -R "$RESOURCE_BUNDLE_SRC" "$RESOURCES_DIR/$RESOURCE_BUNDLE_NAME"
+
 cp "$RUNNER_SRC" "$RESOURCES_DIR/scripts/macos-swift-runner.sh"
 chmod +x "$RESOURCES_DIR/scripts/macos-swift-runner.sh"
 
@@ -60,10 +69,6 @@ cp "$BACKEND_DIR_SRC/setup-macos-installer.sh" "$CONTENTS_DIR/installers/macos-i
 cp "$BACKEND_BOOTSTRAP_SRC" "$CONTENTS_DIR/installers/macos-installer/scripts/macos-bootstrap.js"
 chmod +x "$CONTENTS_DIR/installers/macos-installer/setup-macos-installer.sh"
 chmod +x "$CONTENTS_DIR/installers/macos-installer/scripts/macos-bootstrap.js"
-
-# Explicitly ad-hoc sign the app bundle including nested contents to satisfy Gatekeeper
-echo "Ad-hoc signing .app bundle..."
-codesign --force --deep --sign - "$APP_BUNDLE"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -121,6 +126,10 @@ open "$APP"
 BYPASS
 chmod +x "$BYPASS_SCRIPT"
 
+# Explicitly ad-hoc sign after all bundle content is finalized.
+echo "Ad-hoc signing .app bundle..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+
 echo "Creating DMG..."
 DMG_TMP="$OUT_DIR/tmp.dmg"
 rm -f "$DMG_TMP" "$OUT_DIR/$ARTIFACT_NAME"
@@ -154,27 +163,3 @@ fi
 
 echo "Artifact produced at: $OUT_DIR/$ARTIFACT_NAME"
 exit 0
-
-  exit 1
-fi
-
-if [[ ! -f "$VERIFY_DIR/${APP_NAME}.app/Contents/Resources/scripts/macos-swift-runner.sh" ]]; then
-  echo "Verification failed: runner script missing"
-  exit 1
-fi
-
-if [[ ! -f "$VERIFY_DIR/${APP_NAME}.app/Contents/installers/macos-installer/setup-macos-installer.sh" ]]; then
-  echo "Verification failed: backend setup script missing"
-  exit 1
-fi
-
-if [[ ! -f "$VERIFY_DIR/${APP_NAME}.app/Contents/installers/macos-installer/scripts/macos-bootstrap.js" ]]; then
-  echo "Verification failed: backend bootstrap script missing"
-  exit 1
-fi
-
-shasum -a 256 "$OUT_DIR/$ARTIFACT_NAME" > "$OUT_DIR/$ARTIFACT_NAME.sha256"
-
-echo "Built artifact: $OUT_DIR/$ARTIFACT_NAME"
-echo "Checksum: $OUT_DIR/$ARTIFACT_NAME.sha256"
-echo "App bundle: $STAGE_DIR/${APP_NAME}.app"

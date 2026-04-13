@@ -492,8 +492,7 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    if let url = Bundle.module.url(forResource: "zaloclaw-design", withExtension: "png"),
-                       let nsImg = NSImage(contentsOf: url) {
+                    if let nsImg = loadBundledImage(named: "zaloclaw-design", ext: "png") {
                         Image(nsImage: nsImg)
                             .resizable()
                             .scaledToFit()
@@ -828,8 +827,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var donateQROverlay: some View {
-        if let url = Bundle.module.url(forResource: "donate", withExtension: "png"),
-           let nsImg = NSImage(contentsOf: url) {
+        if let nsImg = loadBundledImage(named: "donate", ext: "png") {
             VStack(spacing: 6) {
                 Image(nsImage: nsImg)
                     .resizable()
@@ -849,6 +847,38 @@ struct ContentView: View {
             .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 2)
             .help("Scan to donate — thank you! ☕")
         }
+    }
+
+    private func loadBundledImage(named resource: String, ext: String) -> NSImage? {
+        for bundle in candidateResourceBundles() {
+            if let url = bundle.url(forResource: resource, withExtension: ext),
+               let image = NSImage(contentsOf: url) {
+                return image
+            }
+        }
+        return nil
+    }
+
+    private func candidateResourceBundles() -> [Bundle] {
+        var bundles: [Bundle] = [Bundle.main]
+
+        if let resourceURL = Bundle.main.resourceURL,
+           let embedded = Bundle(url: resourceURL.appendingPathComponent("ZClawInstaller_ZClawInstaller.bundle", isDirectory: true)) {
+            bundles.append(embedded)
+        }
+
+        let executableDir = URL(fileURLWithPath: Bundle.main.executablePath ?? "")
+            .deletingLastPathComponent()
+        if let sibling = Bundle(url: executableDir.appendingPathComponent("ZClawInstaller_ZClawInstaller.bundle", isDirectory: true)) {
+            bundles.append(sibling)
+        }
+
+        let appRoot = Bundle.main.bundleURL
+        if let rootSibling = Bundle(url: appRoot.appendingPathComponent("ZClawInstaller_ZClawInstaller.bundle", isDirectory: true)) {
+            bundles.append(rootSibling)
+        }
+
+        return bundles
     }
 
     private func statusBadge(title: String, icon: String, tint: Color) -> some View {
