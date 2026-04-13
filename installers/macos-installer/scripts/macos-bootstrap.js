@@ -30,6 +30,14 @@ const STEP_TITLES = [
   ["ui", "Optional UI launch"],
 ];
 
+const DEFAULT_INFRA_TIMEOUT_SECONDS = (() => {
+  const fromEnv = Number.parseInt(process.env.ZALOC_INFRA_TIMEOUT_SECONDS || "", 10);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return fromEnv;
+  }
+  return 900;
+})();
+
 function parseArgs(argv) {
   const parsed = {
     workspaceRoot: process.cwd(),
@@ -42,7 +50,7 @@ function parseArgs(argv) {
     launchUi: null,
     installMissingPrerequisites: true,
     infraScriptPath: null,
-    infraTimeoutSeconds: 60,
+    infraTimeoutSeconds: DEFAULT_INFRA_TIMEOUT_SECONDS,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -98,6 +106,11 @@ function parseArgs(argv) {
     }
 
     if (value === "--infra-timeout-seconds" && next) {
+      if (next === "0") {
+        parsed.infraTimeoutSeconds = 0;
+        i += 1;
+        continue;
+      }
       const parsedTimeout = Number.parseInt(next, 10);
       if (Number.isFinite(parsedTimeout) && parsedTimeout > 0) {
         parsed.infraTimeoutSeconds = parsedTimeout;
@@ -1258,9 +1271,10 @@ function updateUiEnvContainerName(state, uiDir, containerName) {
 async function runInfra(state) {
   const infraDir = path.join(state.workspaceRoot, "zaloclaw-infra");
   const scriptPath = state.runtime.infraScriptPath || path.join(infraDir, "zaloclaw-docker-setup.sh");
-  const infraTimeoutSeconds = Number.isFinite(state.runtime.infraTimeoutSeconds) && state.runtime.infraTimeoutSeconds > 0
+  const infraTimeoutSeconds = Number.isFinite(state.runtime.infraTimeoutSeconds) && state.runtime.infraTimeoutSeconds >= 0
     ? state.runtime.infraTimeoutSeconds
-    : 60;
+    : DEFAULT_INFRA_TIMEOUT_SECONDS;
+  const timeoutLabel = infraTimeoutSeconds === 0 ? "disabled" : `${infraTimeoutSeconds}s`;
 
   cleanupOpenClawConfigDir(state, "infra");
   ensureGogInstallCompatibility(state, "infra");
@@ -1277,13 +1291,13 @@ async function runInfra(state) {
   addLog(
     state,
     "info",
-    `Running infra script: ${scriptPath} (timeout ${infraTimeoutSeconds}s). This step can take several minutes.`,
+    `Running infra script: ${scriptPath} (timeout ${timeoutLabel}). This step can take several minutes.`,
   );
   const run = await runCommand("bash", [scriptPath], {
     cwd: infraDir,
     shell: false,
     inheritOutput: true,
-    timeoutMs: infraTimeoutSeconds * 1000,
+    timeoutMs: infraTimeoutSeconds === 0 ? null : infraTimeoutSeconds * 1000,
     env: {
       ...process.env,
       ZALOC_SETUP_CONTRACT_VERSION: "1",
@@ -1292,7 +1306,7 @@ async function runInfra(state) {
 
   if (run.timedOut) {
     throw new Error(
-      `Infra script exceeded timeout (${infraTimeoutSeconds}s). Re-run with --infra-timeout-seconds for longer operations.`,
+      `Infra script exceeded timeout (${infraTimeoutSeconds}s). Re-run with --infra-timeout-seconds <seconds> or 0 to disable timeout for long operations.`,
     );
   }
 

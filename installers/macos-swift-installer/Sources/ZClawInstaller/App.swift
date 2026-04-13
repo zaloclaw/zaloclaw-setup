@@ -26,6 +26,7 @@ private struct InstallerSettings: Codable {
     var configDir: String
     var provider: String
     var cloneMode: String
+    var infraTimeoutSeconds: Int?
     var installMissingPrerequisites: Bool
     var launchUIAfterSetup: Bool?
 }
@@ -54,6 +55,7 @@ final class InstallerViewModel: ObservableObject {
     @Published var providerApiKey: String = ""
     @Published var litellmMasterKey: String = ""
     @Published var cloneMode: CloneMode = .reuse
+    @Published var infraTimeoutSeconds: String = "900"
     @Published var installMissingPrerequisites: Bool = true
     @Published var launchUIAfterSetup: Bool = true
 
@@ -171,6 +173,7 @@ final class InstallerViewModel: ObservableObject {
             configDir: configDir,
             provider: provider.rawValue,
             cloneMode: cloneMode.rawValue,
+            infraTimeoutSeconds: Int(infraTimeoutSeconds.trimmingCharacters(in: .whitespacesAndNewlines)),
             installMissingPrerequisites: installMissingPrerequisites,
             launchUIAfterSetup: launchUIAfterSetup
         )
@@ -327,12 +330,20 @@ final class InstallerViewModel: ObservableObject {
     }
 
     private func isDockerDesktopInstalled() -> Bool {
+        let fileManager = FileManager.default
+        for path in dockerExecutableCandidates() {
+            if fileManager.isExecutableFile(atPath: path) {
+                return true
+            }
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-lc", "command -v docker >/dev/null 2>&1"]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["docker", "version", "--format", "{{.Client.Version}}"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        
+        process.environment = mergedEnvironmentWithPreferredPath()
+
         do {
             try process.run()
             process.waitUntilExit()
@@ -340,6 +351,37 @@ final class InstallerViewModel: ObservableObject {
         } catch {
             return false
         }
+    }
+
+    private func dockerExecutableCandidates() -> [String] {
+        return [
+            "/opt/homebrew/bin/docker",
+            "/usr/local/bin/docker",
+            "/Applications/Docker.app/Contents/Resources/bin/docker"
+        ]
+    }
+
+    private func mergedEnvironmentWithPreferredPath() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let preferred = [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ]
+
+        let existingPath = env["PATH"] ?? ""
+        let segments = existingPath.split(separator: ":").map(String.init)
+        var merged = preferred
+        for segment in segments where !merged.contains(segment) {
+            merged.append(segment)
+        }
+        env["PATH"] = merged.joined(separator: ":")
+        return env
     }
 
     private func dockerDesktopGuidanceMessage() -> String {
@@ -355,6 +397,9 @@ Please install Docker Desktop manually:
   6. Restart this installer
 
 After installation, the docker command should be available in your shell.
+
+If Docker is already installed, launch it once, then fully quit and reopen the installer.
+GUI apps can have a different PATH than your terminal.
 """
     }
 
@@ -383,6 +428,16 @@ After installation, the docker command should be available in your shell.
             errorMessage = "LiteLLM master key is required."
             return false
         }
+        let timeoutValue = infraTimeoutSeconds.trimmingCharacters(in: .whitespacesAndNewlines)
+        if timeoutValue.isEmpty {
+            errorMessage = "Infra timeout is required (seconds). Use 0 to disable timeout."
+            return false
+        }
+        guard let timeout = Int(timeoutValue), timeout >= 0 else {
+            errorMessage = "Infra timeout must be a non-negative integer. Use 0 to disable timeout."
+            return false
+        }
+        infraTimeoutSeconds = String(timeout)
         errorMessage = ""
         saveSettings()
         return true
@@ -396,6 +451,7 @@ After installation, the docker command should be available in your shell.
         args += ["--litellm-master-key", litellmMasterKey]
         args += ["--config-dir", configDir]
         args += ["--clone-mode", cloneMode.rawValue]
+        args += ["--infra-timeout-seconds", infraTimeoutSeconds]
         args += [launchUIAfterSetup ? "--launch-ui" : "--no-launch-ui"]
         args += [installMissingPrerequisites ? "--install-missing-prerequisites" : "--no-install-missing-prerequisites"]
         return args
@@ -467,6 +523,7 @@ After installation, the docker command should be available in your shell.
         configDir = settings.configDir
         provider = ProviderType(rawValue: settings.provider) ?? .openai
         cloneMode = CloneMode(rawValue: settings.cloneMode) ?? .replace
+        infraTimeoutSeconds = String(settings.infraTimeoutSeconds ?? 900)
         installMissingPrerequisites = settings.installMissingPrerequisites
         launchUIAfterSetup = settings.launchUIAfterSetup ?? true
     }
@@ -620,6 +677,18 @@ struct ContentView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
+                        }
+
+                        HStack(spacing: 8) {
+                            Label("Infra Timeout", systemImage: "timer")
+                                .frame(width: 150, alignment: .leading)
+                            TextField("seconds (0 = disable)", text: $model.infraTimeoutSeconds)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 220)
+                            Text("0 disables timeout")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
                         }
                     }
                     .padding(.top, 4)

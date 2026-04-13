@@ -2,7 +2,7 @@
 
 Local setup package for OpenClaw and Zalo ecosystem.
 
-## What this does
+## 📌 What this does
 
 - Detects OS and permission context.
 - Checks and guides installation for Docker Desktop, Git, Node.js, and npm.
@@ -15,7 +15,7 @@ Local setup package for OpenClaw and Zalo ecosystem.
 	- Windows: `zaloclaw-docker-setup.ps1`
 - Offers optional `npm run dev` launch in `zaloclaw-ui`.
 
-## Quick start
+## 🚀 Quick start
 
 Use native bootstrap installers if you do not have Node.js yet.
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\installers\setup-windows.p
 
 These launchers install prerequisites (including Node.js when missing), then run the interactive setup workflow.
 
-## Native GUI Installers
+## 🖥️ Native GUI Installers
 
 For a more integrated experience, use the native GUI installers:
 
@@ -50,6 +50,10 @@ For a more integrated experience, use the native GUI installers:
   - Location: [installers/windows-inno](installers/windows-inno)
   - Build: [ZaloClawSetup.iss](installers/windows-inno/ZaloClawSetup.iss) (requires Inno Setup 6+)
 
+### 📖 Installation guide (Vietnamese)
+
+- [ZaloInstaller.md](ZaloInstaller.md): Hướng dẫn cài đặt chi tiết bằng tiếng Việt cho macOS GUI installer.
+
 If Node.js is already installed, you can run directly:
 
 ```bash
@@ -58,16 +62,17 @@ npm run setup
 
 The setup workflow writes progress and diagnostics to `setup-state.json`.
 
-## Development commands
+## 🛠️ Development commands
 
 ```bash
 npm run check
 ```
 
-## Key docs
+## 📚 Key docs
 
 - State model: `docs/setup-state-model.md`
 - Infra script contract: `scripts/infra-script-contract.json`
 - Infra script parity checklist: `scripts/infra-script-checklist.md`
 - End-to-end validation checklist: `docs/e2e-validation-checklist.md`
 - Manual fallback steps: `docs/manual-fallback.md`
+- Vietnamese installer guide: [ZaloInstaller.md](ZaloInstaller.md)
