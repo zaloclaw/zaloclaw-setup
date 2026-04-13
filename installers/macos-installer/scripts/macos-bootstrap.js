@@ -646,87 +646,14 @@ async function isDockerDesktopInstalled() {
   return check.code === 0;
 }
 
-function extractBrewBinaryConflictPath(output) {
-  const match = output.match(/already a Binary at '([^']+)'/i);
-  return match ? match[1] : null;
-}
-
-function moveConflictingBinaryAside(filePath) {
-  try {
-    const stat = fs.lstatSync(filePath);
-    if (stat.isDirectory()) {
-      return null;
-    }
-
-    const backupPath = `${filePath}.zaloclaw-backup-${Date.now()}`;
-    fs.renameSync(filePath, backupPath);
-    return backupPath;
-  } catch {
-    return null;
-  }
-}
-
 async function ensureDockerDesktopInstalled(state) {
   if (await isDockerDesktopInstalled()) {
     return true;
   }
 
-  addLog(state, "warn", "Docker Desktop app is not installed.");
-  if (!state.runtime.installMissingPrerequisites) {
-    addLog(state, "error", `${dockerDesktopGuidanceMessage()} Automatic install is disabled.`);
-    return false;
-  }
-
-  addLog(state, "info", "Installing Docker Desktop...");
-  let install = await runCommand("bash", ["-lc", "brew install --cask docker-desktop"], {
-    shell: false,
-  });
-
-  if (install.code !== 0) {
-    const detail = `${install.stderr || ""}\n${install.stdout || ""}`;
-    const conflictPath = extractBrewBinaryConflictPath(detail);
-
-    if (conflictPath) {
-      addLog(state, "warn", `Homebrew reported binary conflict at ${conflictPath}.`);
-      const backupPath = moveConflictingBinaryAside(conflictPath);
-
-      if (backupPath) {
-        addLog(state, "info", `Moved conflicting file to ${backupPath}. Retrying Docker Desktop install...`);
-        install = await runCommand("bash", ["-lc", "brew install --cask docker-desktop"], {
-          shell: false,
-        });
-
-        if (install.code !== 0) {
-          addLog(state, "warn", `Docker Desktop retry install failed with code ${install.code}.`);
-          addLog(state, "warn", `You can restore the previous symlink with: mv \"${backupPath}\" \"${conflictPath}\"`);
-          addLog(state, "error", dockerDesktopGuidanceMessage());
-          return false;
-        }
-      } else {
-        addLog(
-          state,
-          "error",
-          `Cannot auto-resolve conflict at ${conflictPath}. Remove or rename that file, then rerun setup.`,
-        );
-        addLog(state, "error", dockerDesktopGuidanceMessage());
-        return false;
-      }
-    } else {
-      addLog(state, "warn", `Docker Desktop install command failed with code ${install.code}.`);
-      const firstLine = (install.stderr || install.stdout || "").split(/\r?\n/).find(Boolean);
-      if (firstLine) {
-        addLog(state, "warn", `Install error: ${firstLine}`);
-      }
-      addLog(state, "error", dockerDesktopGuidanceMessage());
-      return false;
-    }
-  }
-
-  const installed = await isDockerDesktopInstalled();
-  if (!installed) {
-    addLog(state, "error", dockerDesktopGuidanceMessage());
-  }
-  return installed;
+  addLog(state, "error", "Docker Desktop is not installed.");
+  addLog(state, "error", dockerDesktopGuidanceMessage());
+  return false;
 }
 
 async function ensurePrerequisites(state) {

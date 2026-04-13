@@ -297,6 +297,11 @@ final class InstallerViewModel: ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: value))
     }
 
+    func openURL(_ urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     func pickWorkspaceFolder() {
         if let selected = pickDirectory(startingAt: workspaceRoot) {
             workspaceRoot = selected
@@ -321,7 +326,47 @@ final class InstallerViewModel: ObservableObject {
         return response == .OK ? panel.url?.path : nil
     }
 
+    private func isDockerDesktopInstalled() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-lc", "command -v docker >/dev/null 2>&1"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func dockerDesktopGuidanceMessage() -> String {
+        return """
+Docker Desktop is required for ZaloClaw setup.
+
+Please install Docker Desktop manually:
+  1. Download from: https://www.docker.com/products/docker-desktop/
+  2. Install the application
+  3. Launch Docker Desktop from Applications folder
+  4. Complete the first-run setup
+  5. Wait until Docker is fully running
+  6. Restart this installer
+
+After installation, the docker command should be available in your shell.
+"""
+    }
+
+    func isDockerError() -> Bool {
+        return errorMessage.contains("Docker Desktop")
+    }
+
     private func validateInputs() -> Bool {
+        if !isDockerDesktopInstalled() {
+            errorMessage = dockerDesktopGuidanceMessage()
+            return false
+        }
         if workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             errorMessage = "Workspace root is required."
             return false
@@ -650,15 +695,65 @@ struct ContentView: View {
                 )
 
                 if !model.errorMessage.isEmpty {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                        Text(model.errorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.red)
+                    if model.isDockerError() {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.title3)
+                                Text("Docker Desktop Required")
+                                    .font(.headline)
+                                    .foregroundStyle(.red)
+                            }
+                            
+                            ScrollView([.vertical], showsIndicators: false) {
+                                Text(model.errorMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(height: 140)
+                            
+                            HStack(spacing: 10) {
+                                Button(action: {
+                                    model.copyToClipboard(model.errorMessage)
+                                }) {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.orange)
+                                
+                                Button(action: {
+                                    model.openURL("https://www.docker.com/products/docker-desktop/")
+                                }) {
+                                    Label("Open Download", systemImage: "link")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.blue)
+                                
+                                Spacer()
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        .border(Color.red.opacity(0.3), width: 1)
+                    } else {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                                Text(model.errorMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                     }
-                    .padding(8)
-                    .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 }
 
                 GroupBox {

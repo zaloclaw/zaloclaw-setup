@@ -39,13 +39,32 @@ ensure_formula() {
   brew install "$formula"
 }
 
-ensure_docker_desktop() {
+check_docker_desktop() {
   if has_cmd docker; then
-    return
+    return 0
   fi
-  log "Installing Docker Desktop via Homebrew cask..."
-  brew install --cask docker
-  log "Docker Desktop installed. Launch Docker Desktop once before continuing if docker command is still unavailable."
+  log "Docker Desktop is not installed."
+  return 1
+}
+
+show_docker_guidelines() {
+  log ""
+  log "========================================"
+  log "Docker Desktop Installation Required"
+  log "========================================"
+  log ""
+  log "Docker Desktop is required to run ZaloClaw."
+  log ""
+  log "Please install Docker Desktop manually:"
+  log "  1. Download from: https://www.docker.com/products/docker-desktop/"
+  log "  2. Install the application"
+  log "  3. Launch Docker Desktop from Applications folder"
+  log "  4. Complete the first-run setup"
+  log "  5. Wait until Docker is fully running"
+  log "  6. Run this setup script again"
+  log ""
+  log "========================================"
+  log ""
 }
 
 main() {
@@ -54,7 +73,11 @@ main() {
   ensure_formula git
   ensure_formula node
   ensure_formula npm
-  ensure_docker_desktop
+
+  if ! check_docker_desktop; then
+    show_docker_guidelines
+    exit 1
+  fi
 
   if ! has_cmd node; then
     log "Node.js is still unavailable after install attempt."
