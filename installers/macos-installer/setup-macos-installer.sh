@@ -1,5 +1,21 @@
+
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Ensure Homebrew is installed before anything else
+ensure_homebrew() {
+  if command -v brew >/dev/null 2>&1; then
+    return
+  fi
+  echo "Homebrew is required but not installed."
+  read -r -p "Install Homebrew now? [y/N]: " install_brew
+  case "${install_brew,,}" in
+    y|yes) /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" ;;
+    *) echo "Please install Homebrew manually: https://brew.sh"; exit 1 ;;
+  esac
+}
+
+ensure_homebrew
 
 APP_NAME="ZaloClaw Local Setup (macOS)"
 APP_VERSION="0.1.0"
